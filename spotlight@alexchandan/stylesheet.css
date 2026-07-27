@@ -1,0 +1,77 @@
+.spotlight-dimmer {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+.spotlight-container {
+  background-color: rgba(24, 24, 26, 0.55);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 30px 80px 6px rgba(0, 0, 0, 0.55);
+  padding: 2px;
+}
+
+.spotlight-entry {
+  font-size: 25px;
+  font-weight: 300;
+  color: #f5f5f5;
+  padding: 18px 20px;
+  border: none;
+  background-color: transparent;
+  caret-color: #f5f5f5;
+}
+
+.spotlight-search-icon {
+  size: 22px;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 0 10px 0 6px;
+}
+
+.spotlight-results-scroll {
+  max-height: 420px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 0 10px;
+}
+
+.spotlight-results {
+  padding: 8px 4px 10px 4px;
+  spacing: 2px;
+}
+
+.spotlight-result-item {
+  padding: 10px 14px;
+  border-radius: 12px;
+  spacing: 14px;
+  border: 1px solid transparent;
+  transition-duration: 100ms;
+}
+
+.spotlight-result-item:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.spotlight-result-item:selected {
+  background-color: rgba(10, 132, 255, 0.65);
+}
+
+.spotlight-result-icon {
+  icon-size: 32px;
+}
+
+.spotlight-result-name {
+  font-size: 15px;
+  font-weight: 400;
+  color: #f5f5f5;
+}
+
+.spotlight-result-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.spotlight-result-shortcut {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 3px 9px;
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.1);
+}

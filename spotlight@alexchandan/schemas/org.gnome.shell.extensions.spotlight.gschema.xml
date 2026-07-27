@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="spotlight">
+  <schema id="org.gnome.shell.extensions.spotlight" path="/org/gnome/shell/extensions/spotlight/">
+    <key name="toggle-shortcut" type="as">
+      <default><![CDATA[['<Super>space']]]></default>
+      <summary>Toggle Spotlight search</summary>
+      <description>Keybinding used to open and close the Spotlight search overlay.</description>
+    </key>
+    <key name="result-count" type="i">
+      <default>8</default>
+      <summary>Max results</summary>
+      <description>Maximum number of application results shown.</description>
+    </key>
+  </schema>
+</schemalist>

@@ -1,0 +1,9 @@
+{
+  "uuid": "spotlight@alexchandan",
+  "name": "Spotlight",
+  "description": "A macOS Spotlight-style search overlay for GNOME Shell. Launch apps, run quick calculations, search the web, and trigger system actions from one centered, blurred, keyboard-driven search box. Default shortcut: Super+Space.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "",
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.spotlight"
+}
