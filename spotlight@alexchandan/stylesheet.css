@@ -1,77 +1,152 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 .spotlight-dimmer {
-  background-color: rgba(0, 0, 0, 0.25);
+    background-color: rgba(0, 0, 0, 0.20);
 }
 
 .spotlight-container {
-  background-color: rgba(24, 24, 26, 0.55);
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 30px 80px 6px rgba(0, 0, 0, 0.55);
-  padding: 2px;
+    border-radius: 20px;
+    padding: 12px;
+    spacing: 8px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+}
+
+.spotlight-dark .spotlight-container {
+    color: #f5f5f7;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.spotlight-light .spotlight-container {
+    color: #202124;
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
 }
 
 .spotlight-entry {
-  font-size: 25px;
-  font-weight: 300;
-  color: #f5f5f5;
-  padding: 18px 20px;
-  border: none;
-  background-color: transparent;
-  caret-color: #f5f5f5;
+    border-radius: 14px;
+    padding: 14px 16px;
+    font-size: 18px;
+    font-weight: 500;
+    border: 1px solid transparent;
+    box-shadow: none;
+    caret-color: currentColor;
+}
+
+.spotlight-dark .spotlight-entry {
+    color: #f7f7f8;
+    background-color: rgba(255, 255, 255, 0.075);
+    border-color: rgba(255, 255, 255, 0.08);
+    selection-background-color: rgba(53, 132, 228, 0.75);
+    selected-color: #ffffff;
+}
+
+.spotlight-light .spotlight-entry {
+    color: #202124;
+    background-color: rgba(0, 0, 0, 0.045);
+    border-color: rgba(0, 0, 0, 0.07);
+    selection-background-color: rgba(53, 132, 228, 0.68);
+    selected-color: #ffffff;
+}
+
+.spotlight-entry:focus {
+    border-color: rgba(53, 132, 228, 0.72);
 }
 
 .spotlight-search-icon {
-  size: 22px;
-  color: rgba(255, 255, 255, 0.5);
-  padding: 0 10px 0 6px;
+    icon-size: 22px;
+}
+
+.spotlight-dark .spotlight-search-icon {
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.spotlight-light .spotlight-search-icon {
+    color: rgba(0, 0, 0, 0.58);
 }
 
 .spotlight-results-scroll {
-  max-height: 420px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin: 0 10px;
+    padding: 0;
 }
 
 .spotlight-results {
-  padding: 8px 4px 10px 4px;
-  spacing: 2px;
+    spacing: 3px;
 }
 
 .spotlight-result-item {
-  padding: 10px 14px;
-  border-radius: 12px;
-  spacing: 14px;
-  border: 1px solid transparent;
-  transition-duration: 100ms;
+    border-radius: 12px;
+    padding: 10px 12px;
+    spacing: 12px;
+    transition-duration: 90ms;
 }
 
-.spotlight-result-item:hover {
-  background-color: rgba(255, 255, 255, 0.07);
+.spotlight-dark .spotlight-result-item:hover {
+    background-color: rgba(255, 255, 255, 0.075);
 }
 
-.spotlight-result-item:selected {
-  background-color: rgba(10, 132, 255, 0.65);
+.spotlight-light .spotlight-result-item:hover {
+    background-color: rgba(0, 0, 0, 0.055);
+}
+
+.spotlight-result-item:selected,
+.spotlight-result-item.selected,
+.spotlight-result-item:focus,
+.spotlight-result-item:selected:hover {
+    background-color: rgba(53, 132, 228, 0.82);
+    color: #ffffff;
 }
 
 .spotlight-result-icon {
-  icon-size: 32px;
+    icon-size: 32px;
+    min-width: 32px;
+}
+
+.spotlight-result-text {
+    spacing: 2px;
 }
 
 .spotlight-result-name {
-  font-size: 15px;
-  font-weight: 400;
-  color: #f5f5f5;
+    font-size: 14px;
+    font-weight: 600;
 }
 
 .spotlight-result-desc {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+}
+
+.spotlight-dark .spotlight-result-desc,
+.spotlight-dark .spotlight-result-shortcut {
+    color: rgba(255, 255, 255, 0.60);
+}
+
+.spotlight-light .spotlight-result-desc,
+.spotlight-light .spotlight-result-shortcut {
+    color: rgba(0, 0, 0, 0.56);
+}
+
+.spotlight-result-item:selected .spotlight-result-desc,
+.spotlight-result-item.selected .spotlight-result-desc,
+.spotlight-result-item:selected .spotlight-result-shortcut,
+.spotlight-result-item.selected .spotlight-result-shortcut {
+    color: rgba(255, 255, 255, 0.80);
 }
 
 .spotlight-result-shortcut {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  padding: 3px 9px;
-  border-radius: 6px;
-  background-color: rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 6px;
+}
+
+.spotlight-dark .spotlight-result-shortcut {
+    background-color: rgba(255, 255, 255, 0.075);
+}
+
+.spotlight-light .spotlight-result-shortcut {
+    background-color: rgba(0, 0, 0, 0.055);
+}
+
+.spotlight-high-contrast .spotlight-container,
+.spotlight-high-contrast .spotlight-entry,
+.spotlight-high-contrast .spotlight-result-item:selected {
+    border-width: 2px;
 }

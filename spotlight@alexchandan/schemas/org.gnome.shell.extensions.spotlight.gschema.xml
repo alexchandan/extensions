@@ -1,15 +1,95 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<schemalist gettext-domain="spotlight">
+<schemalist>
   <schema id="org.gnome.shell.extensions.spotlight" path="/org/gnome/shell/extensions/spotlight/">
     <key name="toggle-shortcut" type="as">
-      <default><![CDATA[['<Super>space']]]></default>
-      <summary>Toggle Spotlight search</summary>
-      <description>Keybinding used to open and close the Spotlight search overlay.</description>
+      <default>['&lt;Super&gt;space']</default>
+      <summary>Spotlight keyboard shortcut</summary>
+      <description>Keyboard accelerator used to open and close Spotlight.</description>
     </key>
+
     <key name="result-count" type="i">
+      <range min="3" max="20"/>
       <default>8</default>
-      <summary>Max results</summary>
-      <description>Maximum number of application results shown.</description>
+      <summary>Maximum visible results</summary>
+      <description>Total number of results shown at once.</description>
+    </key>
+
+    <key name="web-engine" type="s">
+      <choices>
+        <choice value="google"/>
+        <choice value="duckduckgo"/>
+        <choice value="brave"/>
+        <choice value="bing"/>
+        <choice value="custom"/>
+      </choices>
+      <default>'google'</default>
+      <summary>Web search engine</summary>
+    </key>
+
+    <key name="custom-search-url" type="s">
+      <default>'https://www.google.com/search?q=%s'</default>
+      <summary>Custom web search URL</summary>
+      <description>HTTP or HTTPS URL template. Use %s where the URL-encoded query should be inserted.</description>
+    </key>
+
+    <key name="show-web-search" type="b">
+      <default>true</default>
+      <summary>Always show web search</summary>
+      <description>Keep web search as the final result in normal searches.</description>
+    </key>
+
+    <key name="enable-window-search" type="b">
+      <default>true</default>
+      <summary>Search open windows</summary>
+    </key>
+
+    <key name="enable-file-search" type="b">
+      <default>true</default>
+      <summary>Search local files</summary>
+    </key>
+
+    <key name="enable-settings-search" type="b">
+      <default>true</default>
+      <summary>Search GNOME Settings panels</summary>
+    </key>
+
+    <key name="file-index-limit" type="i">
+      <range min="500" max="10000"/>
+      <default>4000</default>
+      <summary>Maximum local file index size</summary>
+      <description>Maximum number of local file and folder names kept in memory.</description>
+    </key>
+
+    <key name="theme-mode" type="s">
+      <choices>
+        <choice value="system"/>
+        <choice value="dark"/>
+        <choice value="light"/>
+      </choices>
+      <default>'system'</default>
+      <summary>Spotlight theme</summary>
+    </key>
+
+    <key name="blur-enabled" type="b">
+      <default>true</default>
+      <summary>Enable background blur</summary>
+    </key>
+
+    <key name="blur-strength" type="i">
+      <range min="0" max="40"/>
+      <default>24</default>
+      <summary>Background blur strength</summary>
+    </key>
+
+    <key name="background-opacity" type="d">
+      <range min="0.35" max="1.0"/>
+      <default>0.72</default>
+      <summary>Spotlight card opacity</summary>
+    </key>
+
+    <key name="animations-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Spotlight animations</summary>
     </key>
   </schema>
 </schemalist>
