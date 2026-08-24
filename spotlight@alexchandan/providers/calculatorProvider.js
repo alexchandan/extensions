@@ -128,6 +128,7 @@ export class CalculatorProvider {
             return [{
                 id: `calculator:${expression}`,
                 type: 'calculator',
+                category: 'CALC',
                 title: formatted,
                 subtitle: `${expression} =`,
                 iconName: 'accessories-calculator-symbolic',

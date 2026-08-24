@@ -233,15 +233,21 @@ export class FileProvider {
             matches.push({
                 id: `file:${entry.id}`,
                 type: 'file',
+                category: entry.isDirectory ? 'FOLDER' : 'FILE',
                 title: entry.name,
                 subtitle: compactHomePath(entry.path),
                 gicon: entry.gicon,
                 iconName: entry.isDirectory ? 'folder-symbolic' : 'text-x-generic-symbolic',
                 score: score + (entry.isDirectory ? 20 : 0),
-                activate: () => Gio.AppInfo.launch_default_for_uri(
+                historyData: {path: entry.path},
+                activate: timestamp => Gio.AppInfo.launch_default_for_uri(
                     entry.file.get_uri(),
-                    global.create_app_launch_context(0, -1)
+                    global.create_app_launch_context(timestamp || global.get_current_time(), -1)
                 ),
+                actions: {
+                    new: timestamp => this._openContainingFolder(entry, timestamp),
+                    alternate: timestamp => this._openContainingFolder(entry, timestamp),
+                },
             });
         }
 
@@ -262,6 +268,53 @@ export class FileProvider {
         }
 
         return results;
+    }
+
+    getRecentResults(events, limit = 4) {
+        return events
+            .map((event, index) => {
+                const path = event.historyData?.path
+                    ?? (event.id?.startsWith('file:') ? event.id.slice(5) : '');
+                if (!path)
+                    return null;
+
+                const entry = this._entries.find(item => item.path === path);
+                if (!entry)
+                    return null;
+
+                return {
+                    id: `file:${entry.id}`,
+                    type: 'file',
+                    category: entry.isDirectory ? 'FOLDER' : 'FILE',
+                    title: entry.name,
+                    subtitle: compactHomePath(entry.path),
+                    gicon: entry.gicon,
+                    iconName: entry.isDirectory ? 'folder-symbolic' : 'text-x-generic-symbolic',
+                    score: 900 - index,
+                    historyData: {path: entry.path},
+                    activate: timestamp => Gio.AppInfo.launch_default_for_uri(
+                        entry.file.get_uri(),
+                        global.create_app_launch_context(timestamp || global.get_current_time(), -1)
+                    ),
+                    actions: {
+                        new: timestamp => this._openContainingFolder(entry, timestamp),
+                        alternate: timestamp => this._openContainingFolder(entry, timestamp),
+                    },
+                };
+            })
+            .filter(Boolean)
+            .slice(0, limit);
+    }
+
+    _openContainingFolder(entry, timestamp = 0) {
+        const parent = entry.file.get_parent();
+        if (!parent)
+            return;
+
+        Gio.AppInfo.launch_default_for_uri(
+            parent.get_uri(),
+            global.create_app_launch_context(timestamp || global.get_current_time(), -1)
+        );
     }
 
     destroy() {

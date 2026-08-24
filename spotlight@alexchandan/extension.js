@@ -10,9 +10,10 @@ import {SpotlightOverlay} from './ui/overlay.js';
 
 export default class SpotlightExtension extends Extension {
     enable() {
-        console.log('[Spotlight 2.0.6] enabling');
+        console.log('[Spotlight 3.0.0] enabling');
         this._settings = this.getSettings();
-        this._ensureSafeShortcut();
+        this._ensureSafeShortcut('toggle-shortcut');
+        this._ensureSafeShortcut('selected-text-shortcut');
         this._overlay = new SpotlightOverlay(this._settings);
 
         ShellMain.wm.addKeybinding(
@@ -22,27 +23,32 @@ export default class SpotlightExtension extends Extension {
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
             () => this._overlay.toggle()
         );
+
+        ShellMain.wm.addKeybinding(
+            'selected-text-shortcut',
+            this._settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+            () => this._overlay.openWithSelectedText()
+        );
     }
 
-
-    _ensureSafeShortcut() {
-        const shortcut = this._settings.get_strv('toggle-shortcut')[0] ?? '';
+    _ensureSafeShortcut(key) {
+        const shortcut = this._settings.get_strv(key)[0] ?? '';
         if (!shortcut)
             return;
 
-        // Preferences only allow modifier + key combinations. Also repair
-        // older/manual one-key values so they cannot survive an upgrade via
-        // dconf/GSettings and become a global single-key binding.
         const hasModifier = /<(?:Super|Control|Ctrl|Alt|Shift|Meta|Hyper)>/i.test(shortcut);
         if (!hasModifier) {
             console.warn(`Spotlight: rejected unsafe one-key shortcut “${shortcut}”; restoring default.`);
-            this._settings.reset('toggle-shortcut');
+            this._settings.reset(key);
         }
     }
 
     disable() {
-        console.log('[Spotlight 2.0.6] disabling');
+        console.log('[Spotlight 3.0.0] disabling');
         ShellMain.wm.removeKeybinding('toggle-shortcut');
+        ShellMain.wm.removeKeybinding('selected-text-shortcut');
 
         this._overlay?.destroy();
         this._overlay = null;

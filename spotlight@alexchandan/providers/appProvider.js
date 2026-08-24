@@ -3,15 +3,16 @@
 import Gio from 'gi://Gio';
 import Shell from 'gi://Shell';
 
-
 import {bestFieldScore, normalizeText} from '../utils/fuzzySearch.js';
 
 export class AppProvider {
-    constructor() {
+    constructor(settings) {
+        this._settings = settings;
         this._appSystem = Shell.AppSystem.get_default();
         this._usage = global.get_app_usage?.() ?? Shell.AppUsage?.get_default?.() ?? null;
         this._shellSettings = new Gio.Settings({schema_id: 'org.gnome.shell'});
         this._cache = [];
+        this._cacheById = new Map();
         this._favoriteIds = new Set();
         this._usageRanks = new Map();
 
@@ -29,9 +30,7 @@ export class AppProvider {
     }
 
     _refreshFavorites() {
-        this._favoriteIds = new Set(
-            this._shellSettings.get_strv('favorite-apps')
-        );
+        this._favoriteIds = new Set(this._shellSettings.get_strv('favorite-apps'));
     }
 
     _refreshUsageRanks() {
@@ -45,14 +44,14 @@ export class AppProvider {
                     this._usageRanks.set(id, Math.max(5, 70 - index * 2));
             });
         } catch (_error) {
-            // AppUsage context handling varies between Shell releases.
-            // Search remains fully functional without a frequency boost.
+            // Search remains fully functional without Shell usage statistics.
         }
     }
 
     _rebuildCache() {
         this._refreshUsageRanks();
         this._cache = [];
+        this._cacheById.clear();
 
         for (const appInfo of this._appSystem.get_installed()) {
             if (!appInfo.should_show())
@@ -70,7 +69,7 @@ export class AppProvider {
                 ? (appInfo.get_keywords() ?? []).join(' ')
                 : '';
 
-            this._cache.push({
+            const entry = {
                 id,
                 appInfo,
                 name,
@@ -79,7 +78,10 @@ export class AppProvider {
                 genericName: normalizeText(genericName),
                 executable: normalizeText(executable),
                 keywords: normalizeText(keywords),
-            });
+            };
+            this._cache.push(entry);
+            if (id)
+                this._cacheById.set(id, entry);
         }
     }
 
@@ -88,11 +90,9 @@ export class AppProvider {
         if (!term)
             return [];
 
-        const runningIds = new Set(
-            this._appSystem.get_running().map(app => app.get_id())
-        );
-
+        const runningIds = new Set(this._appSystem.get_running().map(app => app.get_id()));
         const results = [];
+
         for (const entry of this._cache) {
             let score = bestFieldScore(term, [
                 {value: entry.normalizedName, weight: 1},
@@ -100,18 +100,18 @@ export class AppProvider {
                 {value: entry.keywords, weight: 0.76},
                 {value: entry.executable, weight: 0.62},
             ]);
-
             if (score < 0)
                 continue;
 
             const isRunning = runningIds.has(entry.id);
             const isFavorite = this._favoriteIds.has(entry.id);
 
-            if (isRunning)
+            if (isRunning && this._settings.get_boolean('boost-running-apps'))
                 score += 115;
-            if (isFavorite)
+            if (isFavorite && this._settings.get_boolean('boost-favorite-apps'))
                 score += 85;
-            score += this._usageRanks.get(entry.id) ?? 0;
+            if (this._settings.get_boolean('boost-recent-results'))
+                score += this._usageRanks.get(entry.id) ?? 0;
 
             results.push(this._toResult(entry, score, {isRunning, isFavorite}));
         }
@@ -141,7 +141,7 @@ export class AppProvider {
 
         return orderedIds
             .map((id, index) => {
-                const entry = this._cache.find(item => item.id === id);
+                const entry = this._cacheById.get(id);
                 if (!entry)
                     return null;
 
@@ -153,11 +153,27 @@ export class AppProvider {
             .slice(0, limit);
     }
 
-    _toResult(entry, score, {isRunning = false, isFavorite = false, quick = false} = {}) {
-        let subtitle = isRunning
-            ? 'Running application · Switch to it'
-            : entry.description;
+    getRecentResults(events, limit = 4) {
+        const runningIds = new Set(this._appSystem.get_running().map(app => app.get_id()));
+        return events
+            .map((event, index) => {
+                const appId = event.historyData?.appId
+                    ?? (event.id?.startsWith('app:') ? event.id.slice(4) : '');
+                const entry = this._cacheById.get(appId);
+                if (!entry)
+                    return null;
+                return this._toResult(entry, 950 - index, {
+                    isRunning: runningIds.has(appId),
+                    isFavorite: this._favoriteIds.has(appId),
+                    quick: true,
+                });
+            })
+            .filter(Boolean)
+            .slice(0, limit);
+    }
 
+    _toResult(entry, score, {isRunning = false, isFavorite = false, quick = false} = {}) {
+        let subtitle = isRunning ? 'Running application · Switch to it' : entry.description;
         if (quick) {
             if (isRunning)
                 subtitle = 'Running application · Switch to it';
@@ -170,11 +186,18 @@ export class AppProvider {
         return {
             id: `app:${entry.id || entry.name}`,
             type: 'app',
+            category: 'APP',
             title: entry.name,
             subtitle,
             gicon: entry.appInfo.get_icon?.() ?? null,
             score,
+            shortcutLabel: isRunning ? 'Switch ↵' : '',
+            historyData: {appId: entry.id},
             activate: timestamp => this._activate(entry, timestamp),
+            actions: {
+                new: timestamp => this._openNew(entry, timestamp),
+                details: timestamp => this._showDetails(entry, timestamp),
+            },
         };
     }
 
@@ -184,30 +207,52 @@ export class AppProvider {
 
         if (app) {
             try {
-                // Shell.App.activate_full() is GNOME Shell's own high-level
-                // activation path: if the app is already running it focuses
-                // the most recently used normal window (including switching
-                // workspaces); otherwise it launches the application.
                 app.activate_full(-1, eventTime);
                 return;
             } catch (error) {
                 logError(error, `Spotlight: activate_full failed for ${entry.name}`);
-
-                // Older/variant Shell builds still expose activate(), which
-                // uses the default workspace and current event timestamp.
                 try {
                     app.activate();
                     return;
                 } catch (_fallbackError) {
-                    // Fall through to launching via the desktop app info.
+                    // Fall through to desktop launch.
                 }
             }
         }
 
+        entry.appInfo.launch([], global.create_app_launch_context(eventTime, -1));
+    }
+
+    _openNew(entry, timestamp = 0) {
+        const app = entry.id ? this._appSystem.lookup_app(entry.id) : null;
+        try {
+            if (app?.can_open_new_window?.()) {
+                app.open_new_window(-1);
+                return;
+            }
+        } catch (_error) {
+            // Desktop launch below is the compatibility fallback.
+        }
+
         entry.appInfo.launch(
             [],
-            global.create_app_launch_context(eventTime, -1)
+            global.create_app_launch_context(timestamp || global.get_current_time(), -1)
         );
+    }
+
+    _showDetails(entry, timestamp = 0) {
+        if (!entry.id)
+            return this._activate(entry, timestamp);
+
+        const uri = `appstream://${entry.id}`;
+        try {
+            Gio.AppInfo.launch_default_for_uri(
+                uri,
+                global.create_app_launch_context(timestamp || global.get_current_time(), -1)
+            );
+        } catch (_error) {
+            this._activate(entry, timestamp);
+        }
     }
 
     destroy() {
@@ -221,10 +266,12 @@ export class AppProvider {
         }
 
         this._cache = [];
+        this._cacheById.clear();
         this._favoriteIds.clear();
         this._usageRanks.clear();
         this._shellSettings = null;
         this._usage = null;
         this._appSystem = null;
+        this._settings = null;
     }
 }

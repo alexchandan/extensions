@@ -51,6 +51,7 @@ export class SettingsProvider {
                 return {
                     id: `settings:${entry.id || entry.name}`,
                     type: 'settings',
+                    category: 'SETTING',
                     title: entry.name,
                     subtitle: entry.description || 'GNOME Settings',
                     gicon: entry.appInfo.get_icon?.() ?? null,

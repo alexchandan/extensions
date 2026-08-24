@@ -39,6 +39,7 @@ export class WebProvider {
         return [{
             id: `web:${engineId}:${term}`,
             type: 'web',
+            category: 'WEB',
             title: `Search ${engine.label} for “${term}”`,
             subtitle: 'Open in default browser',
             iconName: 'web-browser-symbolic',

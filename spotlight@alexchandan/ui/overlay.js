@@ -10,46 +10,64 @@ import * as ShellMain from 'resource:///org/gnome/shell/ui/main.js';
 
 import {AppProvider} from '../providers/appProvider.js';
 import {CalculatorProvider} from '../providers/calculatorProvider.js';
+import {ClipboardProvider} from '../providers/clipboardProvider.js';
 import {FileProvider} from '../providers/fileProvider.js';
 import {SettingsProvider} from '../providers/settingsProvider.js';
 import {SystemProvider} from '../providers/systemProvider.js';
 import {WebProvider} from '../providers/webProvider.js';
 import {WindowProvider} from '../providers/windowProvider.js';
-import {parseScopedQuery} from '../utils/fuzzySearch.js';
+import {getMatchTier, parseScopedQuery} from '../utils/fuzzySearch.js';
+import {UsageStore} from '../utils/usageStore.js';
 import {ResultItem} from './resultItem.js';
 
 const ANIMATION_TIME = 150;
 
-// Normal searches use one relevance ranking across providers. Small type
-// bonuses express preference without forcing weak matches above strong ones.
-// This keeps installed apps slightly favored while allowing an exact file or
-// window match to beat an unrelated fuzzy app match.
-const RESULT_TYPE_BONUS = new Map([
-    ['app', 140],
-    ['file', 60],
-    ['window', 40],
-    ['settings', 20],
-    ['calculator', 0],
-    ['system', 0],
-    ['info', -120],
-    ['web', -1000],
-]);
-
-// Some providers add a fixed score merely to keep their own local ordering
-// useful. Remove those fixed offsets before comparing different providers,
-// while preserving meaningful boosts such as running/favorite apps, focused
-// windows, frequently used apps, and directory matches.
 const RESULT_TYPE_BASE_OFFSET = new Map([
     ['window', 150],
     ['settings', 95],
     ['system', 260],
 ]);
 
-function globalRank(result) {
-    const normalizedScore = result.score
-        - (RESULT_TYPE_BASE_OFFSET.get(result.type) ?? 0);
+const TYPE_TO_PROVIDER = new Map([
+    ['app', 'apps'],
+    ['file', 'files'],
+    ['window', 'windows'],
+    ['settings', 'settings'],
+    ['calculator', 'calculator'],
+    ['system', 'system'],
+    ['clipboard', 'clipboard'],
+    ['web', 'web'],
+]);
 
-    return normalizedScore + (RESULT_TYPE_BONUS.get(result.type) ?? 0);
+const TYPE_PREFERENCE = new Map([
+    ['app', 70],
+    ['file', 30],
+    ['window', 20],
+    ['settings', 10],
+    ['calculator', 0],
+    ['system', 0],
+    ['clipboard', 0],
+    ['web', -1000],
+]);
+
+function exactMatchBonus(result, query, enabled) {
+    if (!enabled || !query || !result?.title)
+        return 0;
+
+    switch (getMatchTier(result.title, query)) {
+    case 'exact':
+        return 150;
+    case 'word-exact':
+        return 110;
+    case 'prefix':
+        return 80;
+    case 'word-prefix':
+        return 55;
+    case 'acronym':
+        return 50;
+    default:
+        return 0;
+    }
 }
 
 export class SpotlightOverlay {
@@ -63,10 +81,16 @@ export class SpotlightOverlay {
         this._resultItems = [];
         this._signalIds = [];
         this._blurFailureLogged = false;
+        this._activeSearchTerm = '';
+        this._historyIndex = -1;
+        this._historyDraft = '';
+        this._restoringHistory = false;
 
+        this._usageStore = new UsageStore();
         this._providers = {
-            apps: new AppProvider(),
+            apps: new AppProvider(settings),
             calculator: new CalculatorProvider(),
+            clipboard: new ClipboardProvider(),
             files: new FileProvider(settings),
             settings: new SettingsProvider(),
             system: new SystemProvider(),
@@ -83,6 +107,7 @@ export class SpotlightOverlay {
         this._connectSignals();
         this._applyAppearance();
         this._applyBlur();
+        this._applyDensity();
     }
 
     _buildUI() {
@@ -138,7 +163,6 @@ export class SpotlightOverlay {
         });
         this._topActor.add_child(this._dimmer);
         this._topActor.add_child(this._container);
-
         ShellMain.layoutManager.uiGroup.add_child(this._topActor);
     }
 
@@ -155,21 +179,42 @@ export class SpotlightOverlay {
         connectSetting('background-opacity', () => this._applyAppearance());
         connectSetting('blur-enabled', () => this._applyBlur());
         connectSetting('blur-strength', () => this._applyBlur());
-        connectSetting('result-count', () => this._refreshVisibleResults());
-        connectSetting('show-web-search', () => this._refreshVisibleResults());
-        connectSetting('web-engine', () => this._refreshVisibleResults());
-        connectSetting('custom-search-url', () => this._refreshVisibleResults());
-        connectSetting('enable-window-search', () => this._refreshVisibleResults());
+        connectSetting('result-density', () => this._applyDensity());
+        connectSetting('panel-width', () => this._relayout());
+
+        for (const key of [
+            'result-count',
+            'show-web-search',
+            'web-engine',
+            'custom-search-url',
+            'enable-window-search',
+            'enable-settings-search',
+            'enable-clipboard-search',
+            'provider-order',
+            'prefer-exact-matches',
+            'learn-ranking',
+            'boost-running-apps',
+            'boost-favorite-apps',
+            'boost-recent-results',
+            'show-category-badges',
+        ]) {
+            connectSetting(key, () => this._refreshVisibleResults());
+        }
+
         connectSetting('enable-file-search', () => {
             this._providers.files.setEnabled(
                 this._settings.get_boolean('enable-file-search')
             );
             this._refreshVisibleResults();
         });
-        connectSetting('enable-settings-search', () => this._refreshVisibleResults());
         connectSetting('file-index-limit', () => {
             if (this._settings.get_boolean('enable-file-search'))
                 this._providers.files.rebuildIndex();
+        });
+        connectSetting('history-clear-token', () => {
+            this._usageStore.clear();
+            if (this._isOpen && !this._entry.get_text().trim())
+                this._showQuickResults();
         });
 
         this._signalIds.push([
@@ -236,13 +281,25 @@ export class SpotlightOverlay {
         this._dimmer.set_style(`background-color: rgba(0, 0, 0, ${dimmer});`);
     }
 
+    _applyDensity() {
+        if (!this._topActor)
+            return;
+
+        this._topActor.remove_style_class_name('spotlight-compact');
+        this._topActor.remove_style_class_name('spotlight-comfortable');
+        this._topActor.add_style_class_name(
+            this._settings.get_string('result-density') === 'compact'
+                ? 'spotlight-compact'
+                : 'spotlight-comfortable'
+        );
+    }
+
     _applyBlur() {
         if (!this._dimmer || !this._container)
             return;
 
         this._dimmer.clear_effects();
         this._container.clear_effects();
-
         if (!this._settings.get_boolean('blur-enabled'))
             return;
 
@@ -266,10 +323,7 @@ export class SpotlightOverlay {
             }));
         } catch (error) {
             if (!this._blurFailureLogged) {
-                logError(
-                    error,
-                    'Spotlight: background blur unavailable; using translucent fallback'
-                );
+                logError(error, 'Spotlight: background blur unavailable; using translucent fallback');
                 this._blurFailureLogged = true;
             }
         }
@@ -305,13 +359,10 @@ export class SpotlightOverlay {
         this._dimmer.set_position(0, 0);
         this._dimmer.set_size(monitor.width, monitor.height);
 
-        const containerWidth = Math.min(720, Math.floor(monitor.width * 0.58));
-        const minimumWidth = Math.min(460, Math.max(320, monitor.width - 32));
-        const width = Math.max(minimumWidth, containerWidth);
+        const configuredWidth = this._settings.get_int('panel-width');
+        const width = Math.max(360, Math.min(configuredWidth, monitor.width - 32));
         this._container.set_width(width);
-        this._resultsScroll.set_style(
-            `max-height: ${Math.floor(monitor.height * 0.5)}px;`
-        );
+        this._resultsScroll.set_style(`max-height: ${Math.floor(monitor.height * 0.5)}px;`);
 
         const x = Math.floor((monitor.width - width) / 2);
         const y = Math.floor(monitor.height * 0.14);
@@ -334,20 +385,34 @@ export class SpotlightOverlay {
         return true;
     }
 
-    open() {
-        if (this._isOpen)
+    open({initialText = ''} = {}) {
+        if (this._isOpen) {
+            if (initialText)
+                this._entry.set_text(initialText);
             return;
+        }
 
         if (this._closing)
             this._finishClose();
 
         this._isOpen = true;
+        this._historyIndex = -1;
+        this._historyDraft = '';
         this._relayout();
         this._applyAppearance();
+        this._applyDensity();
         this._applyBlur();
         this._topActor.show();
-        this._entry.set_text('');
-        this._showQuickResults();
+        this._entry.set_text(initialText);
+        if (!initialText)
+            this._showQuickResults();
+
+        if (this._settings.get_boolean('enable-clipboard-search')) {
+            this._providers.clipboard.capture(() => {
+                if (this._isOpen && this._activeSearchTerm)
+                    this._refreshVisibleResults();
+            });
+        }
 
         this._grab = ShellMain.pushModal(this._topActor, {
             actionMode: Shell.ActionMode.POPUP,
@@ -360,7 +425,6 @@ export class SpotlightOverlay {
         }
 
         global.stage.set_key_focus(this._entry.clutter_text);
-
         this._dimmer.remove_all_transitions();
         this._container.remove_all_transitions();
 
@@ -392,12 +456,20 @@ export class SpotlightOverlay {
         });
     }
 
+    openWithSelectedText() {
+        this._providers.clipboard.getPrimarySelection(text => {
+            if (text)
+                this.open({initialText: text.slice(0, 500)});
+            else
+                this.open();
+        });
+    }
+
     close({immediate = false} = {}) {
         if (!this._isOpen && !this._closing)
             return;
 
         this._isOpen = false;
-
         if (immediate || !this._shouldAnimate()) {
             this._finishClose();
             return;
@@ -406,7 +478,6 @@ export class SpotlightOverlay {
         this._closing = true;
         this._dimmer.remove_all_transitions();
         this._container.remove_all_transitions();
-
         this._dimmer.ease({
             opacity: 0,
             duration: ANIMATION_TIME,
@@ -444,6 +515,16 @@ export class SpotlightOverlay {
 
     _onKeyPress(event) {
         const symbol = event.get_key_symbol();
+        const state = event.get_state();
+        const ctrl = Boolean(state & Clutter.ModifierType.CONTROL_MASK);
+        const shift = Boolean(state & Clutter.ModifierType.SHIFT_MASK);
+        const alt = Boolean(state & Clutter.ModifierType.MOD1_MASK);
+
+        if (ctrl && (symbol === Clutter.KEY_Up || symbol === Clutter.KEY_Down)) {
+            this._navigateQueryHistory(symbol === Clutter.KEY_Up ? 1 : -1);
+            return Clutter.EVENT_STOP;
+        }
+
         switch (symbol) {
         case Clutter.KEY_Escape:
             this.close();
@@ -462,12 +543,44 @@ export class SpotlightOverlay {
             return Clutter.EVENT_STOP;
         case Clutter.KEY_Return:
         case Clutter.KEY_KP_Enter:
-        case Clutter.KEY_ISO_Enter:
-            this._activateSelected(event.get_time());
+        case Clutter.KEY_ISO_Enter: {
+            let action = 'default';
+            if (alt)
+                action = 'details';
+            else if (shift)
+                action = 'alternate';
+            else if (ctrl)
+                action = 'new';
+            this._activateSelected(event.get_time(), action);
             return Clutter.EVENT_STOP;
+        }
         default:
             return Clutter.EVENT_PROPAGATE;
         }
+    }
+
+    _navigateQueryHistory(direction) {
+        if (!this._settings.get_boolean('query-history-enabled'))
+            return;
+
+        const history = this._usageStore.getQueryHistory();
+        if (history.length === 0)
+            return;
+
+        if (this._historyIndex < 0)
+            this._historyDraft = this._entry.get_text();
+
+        if (direction > 0)
+            this._historyIndex = Math.min(history.length - 1, this._historyIndex + 1);
+        else
+            this._historyIndex = Math.max(-1, this._historyIndex - 1);
+
+        this._restoringHistory = true;
+        this._entry.set_text(
+            this._historyIndex >= 0 ? history[this._historyIndex] : this._historyDraft
+        );
+        this._entry.clutter_text.set_cursor_position(-1);
+        this._restoringHistory = false;
     }
 
     _isActivatable(index) {
@@ -479,20 +592,13 @@ export class SpotlightOverlay {
             return;
 
         let next = this._selectedIndex;
-
-        // Move only in the requested direction. Do not wrap from the last
-        // result back to the first (or vice versa), because that makes arrow
-        // navigation feel like it is jumping around.
         while (true) {
             next += direction;
-
             if (next < 0 || next >= this._currentResults.length)
                 return;
-
             if (this._isActivatable(next))
                 break;
         }
-
         this._setSelectedIndex(next);
     }
 
@@ -500,16 +606,11 @@ export class SpotlightOverlay {
         const index = this._resultItems.indexOf(item);
         if (index < 0 || !this._isActivatable(index))
             return;
-
-        // The pointer is already over a visible row, so changing selection
-        // should not move the scroll position underneath the mouse.
         this._setSelectedIndex(index, {ensureVisible: false});
     }
 
     _setSelectedIndex(index, {ensureVisible = true} = {}) {
-        if (index < 0 || index >= this._currentResults.length)
-            return;
-        if (!this._isActivatable(index))
+        if (index < 0 || index >= this._currentResults.length || !this._isActivatable(index))
             return;
 
         if (this._selectedIndex >= 0 && this._selectedIndex !== index)
@@ -517,7 +618,6 @@ export class SpotlightOverlay {
 
         this._selectedIndex = index;
         this._resultItems[index]?.setSelected(true);
-
         if (ensureVisible)
             this._ensureVisible(index);
     }
@@ -527,10 +627,8 @@ export class SpotlightOverlay {
             ? [...this._currentResults.keys()]
             : [...this._currentResults.keys()].reverse();
         const target = indexes.find(index => this._isActivatable(index));
-        if (target === undefined)
-            return;
-
-        this._setSelectedIndex(target);
+        if (target !== undefined)
+            this._setSelectedIndex(target);
     }
 
     _ensureVisible(index) {
@@ -542,7 +640,6 @@ export class SpotlightOverlay {
         const [, itemY] = item.get_transformed_position();
         const [, boxY] = this._resultsBox.get_transformed_position();
         const relativeY = itemY - boxY;
-
         const value = adjustment.get_value();
         const pageSize = adjustment.get_page_size();
 
@@ -552,60 +649,120 @@ export class SpotlightOverlay {
             adjustment.set_value(relativeY + item.height - pageSize);
     }
 
-    _activateSelected(timestamp = 0) {
+    _activateSelected(timestamp = 0, action = 'default') {
         if (this._selectedIndex < 0 || !this._isActivatable(this._selectedIndex))
             return;
-
-        this._activateResult(this._currentResults[this._selectedIndex], timestamp);
+        this._activateResult(this._currentResults[this._selectedIndex], timestamp, action);
     }
 
-    _activateResult(result, timestamp = 0) {
+    _activateResult(result, timestamp = 0, action = 'default') {
         if (typeof result.activate !== 'function')
             return;
+
+        const fn = action === 'default'
+            ? result.activate
+            : (result.actions?.[action] ?? result.activate);
+        const query = this._activeSearchTerm;
+
+        if (this._settings.get_boolean('learn-ranking'))
+            this._usageStore.recordActivation(query, result);
+        else if (this._settings.get_boolean('query-history-enabled'))
+            this._usageStore.recordQuery(query);
 
         this.close({immediate: true});
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             try {
-                result.activate(timestamp);
+                fn(timestamp);
             } catch (error) {
                 logError(error, `Spotlight: failed to activate ${result.title}`);
-                global.notify_error?.(
-                    'Spotlight',
-                    `Could not open “${result.title}”.`
-                );
+                global.notify_error?.('Spotlight', `Could not open “${result.title}”.`);
             }
             return GLib.SOURCE_REMOVE;
         });
     }
 
     _refreshVisibleResults() {
-        if (!this._isOpen)
-            return;
-
-        this._onTextChanged();
+        if (this._isOpen)
+            this._onTextChanged();
     }
 
     _onTextChanged() {
         const text = this._entry.get_text().trim();
+        if (!this._restoringHistory) {
+            this._historyIndex = -1;
+            this._historyDraft = '';
+        }
+
         if (!text) {
+            this._activeSearchTerm = '';
             this._showQuickResults();
             return;
         }
 
         const parsed = parseScopedQuery(text);
+        this._activeSearchTerm = parsed.term;
         const results = this._search(parsed);
-        this._renderResults(results);
+        this._renderResults(results, parsed.term);
     }
 
     _showQuickResults() {
         const maxResults = this._settings.get_int('result-count');
-        this._renderResults(this._providers.apps.getQuickResults(maxResults));
+        const results = [];
+
+        let fileResults = [];
+        if (this._settings.get_boolean('enable-file-search')) {
+            const recentEvents = this._usageStore.getRecentEvents('file', 4);
+            const fileLimit = Math.min(3, Math.max(0, Math.floor(maxResults / 3)));
+            fileResults = this._providers.files.getRecentResults(recentEvents, fileLimit);
+        }
+
+        const appLimit = Math.max(0, maxResults - fileResults.length);
+        const appResults = this._providers.apps.getQuickResults(appLimit);
+        if (appResults.length > 0) {
+            results.push({id: 'section:apps', type: 'section', title: 'Applications', score: 0});
+            results.push(...appResults);
+        }
+        if (fileResults.length > 0) {
+            results.push({id: 'section:files', type: 'section', title: 'Recent Files', score: 0});
+            results.push(...fileResults);
+        }
+
+        this._renderResults(results, '');
+    }
+
+    _providerOrderBonus(result) {
+        const provider = TYPE_TO_PROVIDER.get(result.type);
+        if (!provider)
+            return 0;
+
+        const order = this._settings.get_strv('provider-order');
+        const index = order.indexOf(provider);
+        if (index < 0)
+            return 0;
+        return Math.max(0, (order.length - index - 1) * 12);
+    }
+
+    _globalRank(result, query) {
+        const normalizedScore = result.score - (RESULT_TYPE_BASE_OFFSET.get(result.type) ?? 0);
+        let rank = normalizedScore
+            + (TYPE_PREFERENCE.get(result.type) ?? 0)
+            + this._providerOrderBonus(result)
+            + exactMatchBonus(
+                result,
+                query,
+                this._settings.get_boolean('prefer-exact-matches')
+            );
+
+        if (this._settings.get_boolean('learn-ranking'))
+            rank += this._usageStore.getBoost(query, result.id);
+
+        return rank;
     }
 
     _search({scope, term, explicit}) {
         const maxResults = this._settings.get_int('result-count');
-        if (!term)
+        if (!term && scope !== 'clipboard')
             return [];
 
         if (scope !== 'all') {
@@ -622,6 +779,10 @@ export class SpotlightOverlay {
                 return this._providers.calculator.search(term);
             case 'system':
                 return this._providers.system.search(term, maxResults);
+            case 'clipboard':
+                return this._settings.get_boolean('enable-clipboard-search')
+                    ? this._providers.clipboard.search(term, maxResults, {explicit: true})
+                    : [];
             case 'web':
                 return this._providers.web.search(term, {explicit: true});
             default:
@@ -641,9 +802,11 @@ export class SpotlightOverlay {
             results.push(...this._providers.files.search(term, maxResults, {explicit}));
         if (this._settings.get_boolean('enable-settings-search'))
             results.push(...this._providers.settings.search(term, maxResults));
+        if (this._settings.get_boolean('enable-clipboard-search'))
+            results.push(...this._providers.clipboard.search(term, Math.min(4, maxResults)));
 
         results.sort((a, b) =>
-            globalRank(b) - globalRank(a)
+            this._globalRank(b, term) - this._globalRank(a, term)
             || b.score - a.score
             || a.title.localeCompare(b.title)
         );
@@ -654,16 +817,16 @@ export class SpotlightOverlay {
         const webResult = this._providers.web.search(term, {explicit: false})[0];
         if (!webResult)
             return results.slice(0, maxResults);
-
         if (maxResults <= 1)
             return [webResult];
 
         return [...results.slice(0, maxResults - 1), webResult];
     }
 
-    _renderResults(results) {
+    _renderResults(results, query = '') {
         this._currentResults = results;
         this._selectedIndex = -1;
+        const showCategory = this._settings.get_boolean('show-category-badges');
 
         for (let index = 0; index < results.length; index++) {
             let item = this._resultItems[index];
@@ -677,16 +840,13 @@ export class SpotlightOverlay {
             }
 
             item.setSelected(false);
-            item.setResult(results[index]);
+            item.setResult(results[index], query, {showCategory});
         }
 
         for (let index = results.length; index < this._resultItems.length; index++)
             this._resultItems[index].clearResult();
 
         this._resultsScroll.visible = results.length > 0;
-
-        // A new result set is a new navigation context. Always return the
-        // viewport to the top so the newly selected first result is visible.
         const adjustment = this._resultsScroll.get_vadjustment();
         adjustment.set_value(adjustment.get_lower());
 
@@ -694,6 +854,12 @@ export class SpotlightOverlay {
             typeof result.activate === 'function');
         if (firstActivatable >= 0)
             this._setSelectedIndex(firstActivatable, {ensureVisible: false});
+    }
+
+    clearLearningHistory() {
+        this._usageStore.clear();
+        if (this._isOpen)
+            this._showQuickResults();
     }
 
     destroy() {
@@ -716,6 +882,9 @@ export class SpotlightOverlay {
         for (const provider of Object.values(this._providers))
             provider.destroy();
         this._providers = null;
+
+        this._usageStore.destroy();
+        this._usageStore = null;
 
         this._topActor?.destroy();
         this._topActor = null;

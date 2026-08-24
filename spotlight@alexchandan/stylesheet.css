@@ -150,3 +150,77 @@
 .spotlight-high-contrast .spotlight-result-item:selected {
     border-width: 2px;
 }
+
+/* Spotlight 3 result metadata and density */
+.spotlight-result-meta {
+    spacing: 6px;
+}
+
+.spotlight-result-category {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 6px;
+}
+
+.spotlight-dark .spotlight-result-category {
+    color: rgba(255, 255, 255, 0.62);
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.spotlight-light .spotlight-result-category {
+    color: rgba(0, 0, 0, 0.56);
+    background-color: rgba(0, 0, 0, 0.055);
+}
+
+.spotlight-result-item:selected .spotlight-result-category,
+.spotlight-result-item.selected .spotlight-result-category {
+    color: rgba(255, 255, 255, 0.9);
+    background-color: rgba(255, 255, 255, 0.16);
+}
+
+.spotlight-result-section {
+    padding: 9px 12px 5px 12px;
+    spacing: 0;
+    background-color: transparent;
+}
+
+.spotlight-result-section .spotlight-result-name {
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.spotlight-dark .spotlight-result-section .spotlight-result-name {
+    color: rgba(255, 255, 255, 0.48);
+}
+
+.spotlight-light .spotlight-result-section .spotlight-result-name {
+    color: rgba(0, 0, 0, 0.46);
+}
+
+.spotlight-result-danger .spotlight-result-name {
+    color: #ed333b;
+}
+
+.spotlight-result-danger:selected .spotlight-result-name,
+.spotlight-result-danger.selected .spotlight-result-name {
+    color: #ffffff;
+}
+
+.spotlight-compact .spotlight-result-item {
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
+.spotlight-compact .spotlight-result-icon {
+    icon-size: 27px;
+    min-width: 27px;
+}
+
+.spotlight-compact .spotlight-result-name {
+    font-size: 13px;
+}
+
+.spotlight-compact .spotlight-result-desc {
+    font-size: 11px;
+}

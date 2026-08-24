@@ -3,503 +3,314 @@
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const WEB_ENGINES = [
-    ['google', 'Google'],
-    ['duckduckgo', 'DuckDuckGo'],
-    ['brave', 'Brave Search'],
-    ['bing', 'Bing'],
-    ['custom', 'Custom URL'],
+    ['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['brave', 'Brave Search'],
+    ['bing', 'Bing'], ['custom', 'Custom URL'],
 ];
-
-const THEME_MODES = [
-    ['system', 'Follow system'],
-    ['dark', 'Dark'],
-    ['light', 'Light'],
-];
-
+const THEME_MODES = [['system', 'Follow system'], ['dark', 'Dark'], ['light', 'Light']];
+const DENSITY_MODES = [['comfortable', 'Comfortable'], ['compact', 'Compact']];
+const PROVIDERS = new Map([
+    ['apps', 'Applications'], ['files', 'Files'], ['windows', 'Open Windows'],
+    ['settings', 'GNOME Settings'], ['calculator', 'Calculator'], ['system', 'System Actions'],
+    ['clipboard', 'Clipboard'], ['web', 'Web Search'],
+]);
 const SETTINGS_KEYS = [
-    'toggle-shortcut',
-    'result-count',
-    'web-engine',
-    'custom-search-url',
-    'show-web-search',
-    'enable-window-search',
-    'enable-file-search',
-    'enable-settings-search',
-    'file-index-limit',
-    'theme-mode',
-    'blur-enabled',
-    'blur-strength',
-    'background-opacity',
+    'toggle-shortcut', 'selected-text-shortcut', 'result-count', 'panel-width',
+    'result-density', 'show-category-badges', 'web-engine', 'custom-search-url',
+    'show-web-search', 'enable-window-search', 'enable-file-search',
+    'enable-settings-search', 'enable-clipboard-search', 'file-index-limit',
+    'provider-order', 'prefer-exact-matches', 'learn-ranking', 'boost-running-apps',
+    'boost-favorite-apps', 'boost-recent-results', 'query-history-enabled',
+    'theme-mode', 'blur-enabled', 'blur-strength', 'background-opacity',
     'animations-enabled',
 ];
 
 export default class SpotlightPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
-        window.set_default_size(640, 720);
+        window.set_default_size(680, 780);
 
-        const page = new Adw.PreferencesPage({
-            title: 'Spotlight',
-            icon_name: 'edit-find-symbolic',
-        });
+        const page = new Adw.PreferencesPage({title: 'Spotlight', icon_name: 'edit-find-symbolic'});
         window.add(page);
 
         this._addShortcutGroup(page, window, settings);
         this._addSearchGroup(page, settings);
+        this._addRankingGroup(page, settings);
         this._addProvidersGroup(page, settings);
+        this._addProviderOrderGroup(page, settings);
         this._addAppearanceGroup(page, settings);
+        this._addHistoryGroup(page, window, settings);
         this._addResetGroup(page, window, settings);
         this._addAboutGroup(page);
     }
 
     _addShortcutGroup(page, window, settings) {
         const group = new Adw.PreferencesGroup({
-            title: 'Keyboard Shortcut',
-            description: 'Open Spotlight from anywhere in the GNOME session.',
+            title: 'Keyboard Shortcuts',
+            description: 'Every global shortcut must contain a modifier plus another key.',
         });
         page.add(group);
+        this._addShortcutRow(group, window, settings, 'toggle-shortcut', 'Toggle Spotlight',
+            'Open or close Spotlight from anywhere.');
+        this._addShortcutRow(group, window, settings, 'selected-text-shortcut', 'Search selected text',
+            'Optional shortcut that opens Spotlight with the current primary text selection.');
+    }
 
-        const row = new Adw.ActionRow({
-            title: 'Toggle Spotlight',
-            subtitle: 'Click the edit button, then press the new key combination.',
-        });
+    _addShortcutRow(group, window, settings, key, title, subtitle) {
+        const row = new Adw.ActionRow({title, subtitle});
         group.add(row);
-
         const label = new Gtk.ShortcutLabel({
-            disabled_text: 'Disabled',
-            accelerator: settings.get_strv('toggle-shortcut')[0] || '',
-            valign: Gtk.Align.CENTER,
+            disabled_text: 'Disabled', accelerator: settings.get_strv(key)[0] || '', valign: Gtk.Align.CENTER,
         });
         row.add_suffix(label);
 
-        const resetButton = new Gtk.Button({
-            icon_name: 'edit-undo-symbolic',
-            tooltip_text: 'Reset shortcut',
-            valign: Gtk.Align.CENTER,
-            css_classes: ['flat'],
-        });
-        row.add_suffix(resetButton);
+        const reset = new Gtk.Button({icon_name: 'edit-undo-symbolic', tooltip_text: 'Reset shortcut', valign: Gtk.Align.CENTER, css_classes: ['flat']});
+        const edit = new Gtk.Button({icon_name: 'document-edit-symbolic', tooltip_text: 'Change shortcut', valign: Gtk.Align.CENTER, css_classes: ['flat']});
+        row.add_suffix(reset); row.add_suffix(edit);
 
-        const editButton = new Gtk.Button({
-            icon_name: 'document-edit-symbolic',
-            tooltip_text: 'Change shortcut',
-            valign: Gtk.Align.CENTER,
-            css_classes: ['flat'],
-        });
-        row.add_suffix(editButton);
-
-        const updateLabel = () =>
-            label.set_accelerator(settings.get_strv('toggle-shortcut')[0] || '');
-        const changedId = settings.connect('changed::toggle-shortcut', updateLabel);
+        const changedId = settings.connect(`changed::${key}`, () =>
+            label.set_accelerator(settings.get_strv(key)[0] || ''));
         window.connect('close-request', () => {
-            if (changedId)
-                settings.disconnect(changedId);
+            try { settings.disconnect(changedId); } catch (_error) {}
             return false;
         });
-
-        resetButton.connect('clicked', () => settings.reset('toggle-shortcut'));
-        editButton.connect('clicked', () =>
-            this._showShortcutDialog(window, settings));
+        reset.connect('clicked', () => settings.reset(key));
+        edit.connect('clicked', () => this._showShortcutDialog(window, settings, key, title));
     }
 
-    _showShortcutDialog(window, settings) {
-        const original = settings.get_strv('toggle-shortcut');
+    _showShortcutDialog(window, settings, key, title) {
+        const original = settings.get_strv(key);
         let pending = original[0] || '';
+        settings.set_strv(key, []);
 
-        // Temporarily remove the Shell binding so pressing the old shortcut
-        // while recording does not open the overlay behind this dialog.
-        settings.set_strv('toggle-shortcut', []);
-
-        const dialog = new Gtk.Dialog({
-            title: 'Set Spotlight Shortcut',
-            transient_for: window,
-            modal: true,
-        });
+        const dialog = new Gtk.Dialog({title, transient_for: window, modal: true});
         dialog.add_button('Cancel', Gtk.ResponseType.CANCEL);
         dialog.add_button('Apply', Gtk.ResponseType.OK);
         dialog.set_default_response(Gtk.ResponseType.OK);
 
         const content = new Gtk.Box({
-            orientation: Gtk.Orientation.VERTICAL,
-            spacing: 14,
-            margin_top: 24,
-            margin_bottom: 24,
-            margin_start: 24,
-            margin_end: 24,
+            orientation: Gtk.Orientation.VERTICAL, spacing: 14,
+            margin_top: 24, margin_bottom: 24, margin_start: 24, margin_end: 24,
         });
-
+        content.append(new Gtk.Label({label: 'Press the shortcut you want to use', wrap: true, xalign: 0, css_classes: ['title-3']}));
         content.append(new Gtk.Label({
-            label: 'Press the shortcut you want to use',
-            wrap: true,
-            xalign: 0,
-            css_classes: ['title-3'],
+            label: 'Use at least two keys, such as Super + Space. Backspace disables it; Escape cancels.',
+            wrap: true, xalign: 0, css_classes: ['dim-label'],
         }));
-        content.append(new Gtk.Label({
-            label: 'Use at least two keys (for example, Super + Space). Press Backspace to disable, or Escape to cancel.',
-            wrap: true,
-            xalign: 0,
-            css_classes: ['dim-label'],
-        }));
-
-        const validationLabel = new Gtk.Label({
-            label: '',
-            wrap: true,
-            xalign: 0,
-            visible: false,
-            css_classes: ['error'],
-        });
-        content.append(validationLabel);
-
-        const shortcutLabel = new Gtk.ShortcutLabel({
-            disabled_text: 'Disabled',
-            accelerator: pending,
-            halign: Gtk.Align.CENTER,
-            margin_top: 16,
-            margin_bottom: 16,
-        });
-        content.append(shortcutLabel);
+        const validation = new Gtk.Label({label: '', wrap: true, xalign: 0, visible: false, css_classes: ['error']});
+        content.append(validation);
+        const shortcut = new Gtk.ShortcutLabel({disabled_text: 'Disabled', accelerator: pending, halign: Gtk.Align.CENTER, margin_top: 16, margin_bottom: 16});
+        content.append(shortcut);
         dialog.get_content_area().append(content);
 
         const controller = new Gtk.EventControllerKey();
         controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);
         dialog.add_controller(controller);
-
         controller.connect('key-pressed', (_controller, keyval, keycode, state) => {
             if (keyval === Gdk.KEY_Escape) {
                 dialog.response(Gtk.ResponseType.CANCEL);
                 return Gdk.EVENT_STOP;
             }
-
             const mask = state & Gtk.accelerator_get_default_mod_mask();
             if (keyval === Gdk.KEY_BackSpace && mask === 0) {
-                pending = '';
-                shortcutLabel.set_accelerator('');
+                pending = ''; shortcut.set_accelerator(''); validation.visible = false;
                 return Gdk.EVENT_STOP;
             }
-
-            if (!Gtk.accelerator_valid(keyval, mask)) {
-                validationLabel.label = 'That key cannot be used as a shortcut.';
-                validationLabel.visible = true;
+            if (!Gtk.accelerator_valid(keyval, mask) || mask === 0) {
+                validation.label = 'Use a modifier plus another key, for example Super + Space.';
+                validation.visible = true;
                 return Gdk.EVENT_STOP;
             }
-
-            // Require a real key combination: one modifier plus another key.
-            // This prevents single-letter, single-number, function-key, and
-            // other one-key global shortcuts from stealing normal input.
-            if (mask === 0) {
-                validationLabel.label = 'Shortcut must use at least two keys, such as Super + Space.';
-                validationLabel.visible = true;
-                return Gdk.EVENT_STOP;
-            }
-
-            validationLabel.visible = false;
-            pending = Gtk.accelerator_name_with_keycode(
-                null,
-                keyval,
-                keycode,
-                mask
-            );
-            shortcutLabel.set_accelerator(pending);
+            validation.visible = false;
+            pending = Gtk.accelerator_name_with_keycode(null, keyval, keycode, mask);
+            shortcut.set_accelerator(pending);
             return Gdk.EVENT_STOP;
         });
-
         dialog.connect('response', (_dialog, response) => {
-            if (response === Gtk.ResponseType.OK)
-                settings.set_strv('toggle-shortcut', pending ? [pending] : []);
-            else
-                settings.set_strv('toggle-shortcut', original);
-
+            settings.set_strv(key, response === Gtk.ResponseType.OK && pending ? [pending] :
+                response === Gtk.ResponseType.OK ? [] : original);
             dialog.destroy();
         });
-
         dialog.present();
     }
 
     _addSearchGroup(page, settings) {
-        const group = new Adw.PreferencesGroup({
-            title: 'Search',
-            description: 'Control ranking output and web fallback behavior.',
-        });
+        const group = new Adw.PreferencesGroup({title: 'Search', description: 'General result and web-search behavior.'});
         page.add(group);
-
-        const countRow = new Adw.SpinRow({
-            title: 'Maximum results',
-            subtitle: 'Total number of visible results, including web search',
-            adjustment: new Gtk.Adjustment({
-                lower: 3,
-                upper: 20,
-                step_increment: 1,
-                page_increment: 1,
-                value: settings.get_int('result-count'),
-            }),
+        const count = new Adw.SpinRow({
+            title: 'Maximum results', subtitle: 'Total visible results, including web search',
+            adjustment: new Gtk.Adjustment({lower: 3, upper: 20, step_increment: 1, page_increment: 1, value: settings.get_int('result-count')}),
         });
-        group.add(countRow);
-        settings.bind(
-            'result-count',
-            countRow,
-            'value',
-            Gio.SettingsBindFlags.DEFAULT
-        );
+        group.add(count); settings.bind('result-count', count, 'value', Gio.SettingsBindFlags.DEFAULT);
 
         const engineModel = Gtk.StringList.new(WEB_ENGINES.map(([, label]) => label));
-        const engineRow = new Adw.ComboRow({
-            title: 'Web search engine',
-            model: engineModel,
-        });
-        engineRow.selected = Math.max(
-            0,
-            WEB_ENGINES.findIndex(([id]) => id === settings.get_string('web-engine'))
-        );
-        group.add(engineRow);
-        engineRow.connect('notify::selected', () => {
-            const engine = WEB_ENGINES[engineRow.selected]?.[0] ?? 'google';
-            settings.set_string('web-engine', engine);
-        });
-        settings.connect('changed::web-engine', () => {
-            const index = WEB_ENGINES.findIndex(
-                ([id]) => id === settings.get_string('web-engine')
-            );
-            engineRow.selected = Math.max(0, index);
-        });
+        const engine = new Adw.ComboRow({title: 'Web search engine', model: engineModel});
+        const syncEngine = () => engine.selected = Math.max(0, WEB_ENGINES.findIndex(([id]) => id === settings.get_string('web-engine')));
+        syncEngine(); group.add(engine);
+        engine.connect('notify::selected', () => settings.set_string('web-engine', WEB_ENGINES[engine.selected]?.[0] ?? 'google'));
+        settings.connect('changed::web-engine', syncEngine);
 
-        const customUrlRow = new Adw.EntryRow({
-            title: 'Custom search URL',
-            text: settings.get_string('custom-search-url'),
-        });
-        customUrlRow.add_prefix(new Gtk.Image({
-            icon_name: 'insert-link-symbolic',
-            tooltip_text: 'Use %s where the encoded query should be inserted',
-        }));
-        group.add(customUrlRow);
-        settings.bind(
-            'custom-search-url',
-            customUrlRow,
-            'text',
-            Gio.SettingsBindFlags.DEFAULT
-        );
-        const syncCustomRow = () => {
-            customUrlRow.sensitive = settings.get_string('web-engine') === 'custom';
-        };
-        syncCustomRow();
-        engineRow.connect('notify::selected', syncCustomRow);
-        customUrlRow.set_tooltip_text('Example: https://search.example/?q=%s');
+        const custom = new Adw.EntryRow({title: 'Custom search URL', text: settings.get_string('custom-search-url')});
+        custom.add_prefix(new Gtk.Image({icon_name: 'insert-link-symbolic'})); group.add(custom);
+        settings.bind('custom-search-url', custom, 'text', Gio.SettingsBindFlags.DEFAULT);
+        const syncCustom = () => custom.sensitive = settings.get_string('web-engine') === 'custom';
+        syncCustom(); settings.connect('changed::web-engine', syncCustom);
+        group.add(this._switch(settings, 'show-web-search', 'Always show web search', 'Keep web search as the last normal-search result.'));
+        group.add(this._switch(settings, 'show-category-badges', 'Category badges', 'Show APP, FILE, WINDOW, and other small result labels.'));
+    }
 
-        group.add(this._createSwitchRow(
-            settings,
-            'show-web-search',
-            'Always show web search',
-            'Keep web search as the final result when using normal search.'
-        ));
+    _addRankingGroup(page, settings) {
+        const group = new Adw.PreferencesGroup({
+            title: 'Search Intelligence',
+            description: 'Relevance stays primary; these preferences only add small ranking signals.',
+        });
+        page.add(group);
+        group.add(this._switch(settings, 'prefer-exact-matches', 'Prefer exact matches', 'Give exact, word-prefix, and acronym matches a stronger boost.'));
+        group.add(this._switch(settings, 'learn-ranking', 'Learn from usage', 'Locally learn which results you choose for similar searches.'));
+        group.add(this._switch(settings, 'boost-running-apps', 'Boost running applications', 'Prefer matching apps that already have windows open.'));
+        group.add(this._switch(settings, 'boost-favorite-apps', 'Boost favorite applications', 'Prefer matching apps pinned to GNOME favorites.'));
+        group.add(this._switch(settings, 'boost-recent-results', 'Boost recent/frequent items', 'Use GNOME app usage plus local recent selections as a small signal.'));
+        group.add(this._switch(settings, 'query-history-enabled', 'Query history', 'Use Ctrl + Up/Down in Spotlight to browse recent searches.'));
     }
 
     _addProvidersGroup(page, settings) {
+        const group = new Adw.PreferencesGroup({title: 'Search Providers', description: 'Apps, calculator, system actions, and web modes remain available.'});
+        page.add(group);
+        group.add(this._switch(settings, 'enable-window-search', 'Open windows', 'Find and focus a window by title or application.'));
+        group.add(this._switch(settings, 'enable-file-search', 'Local files', 'Incrementally index common folders locally.'));
+        group.add(this._switch(settings, 'enable-settings-search', 'GNOME Settings', 'Search control-center panels.'));
+        group.add(this._switch(settings, 'enable-clipboard-search', 'Clipboard history', 'Session-only text history; nothing is written to disk.'));
+        const limit = new Adw.SpinRow({
+            title: 'File index limit', subtitle: 'Maximum local file and folder names kept in memory',
+            adjustment: new Gtk.Adjustment({lower: 500, upper: 10000, step_increment: 250, page_increment: 1000, value: settings.get_int('file-index-limit')}),
+        });
+        group.add(limit); settings.bind('file-index-limit', limit, 'value', Gio.SettingsBindFlags.DEFAULT);
+    }
+
+    _addProviderOrderGroup(page, settings) {
         const group = new Adw.PreferencesGroup({
-            title: 'Search Providers',
-            description: 'Apps, calculator, and system actions are always enabled.',
+            title: 'Provider Preference',
+            description: 'Move providers up or down. This is a soft preference; a much better match can still outrank it.',
         });
         page.add(group);
+        const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
+        group.add(list);
 
-        group.add(this._createSwitchRow(
-            settings,
-            'enable-window-search',
-            'Open windows',
-            'Find a window by its title or application name.'
-        ));
-        group.add(this._createSwitchRow(
-            settings,
-            'enable-file-search',
-            'Local files',
-            'Incrementally index common folders without sending filenames anywhere.'
-        ));
-        group.add(this._createSwitchRow(
-            settings,
-            'enable-settings-search',
-            'GNOME Settings',
-            'Include control-center panels such as Bluetooth and Displays.'
-        ));
+        const render = () => {
+            let child = list.get_first_child();
+            while (child) {
+                const next = child.get_next_sibling();
+                list.remove(child); child = next;
+            }
+            const order = settings.get_strv('provider-order').filter(id => PROVIDERS.has(id));
+            for (const id of PROVIDERS.keys()) if (!order.includes(id)) order.push(id);
 
-        const indexLimitRow = new Adw.SpinRow({
-            title: 'File index limit',
-            subtitle: 'Maximum local file and folder names kept in memory',
-            adjustment: new Gtk.Adjustment({
-                lower: 500,
-                upper: 10000,
-                step_increment: 250,
-                page_increment: 1000,
-                value: settings.get_int('file-index-limit'),
-            }),
-        });
-        group.add(indexLimitRow);
-        settings.bind(
-            'file-index-limit',
-            indexLimitRow,
-            'value',
-            Gio.SettingsBindFlags.DEFAULT
-        );
+            order.forEach((id, index) => {
+                const row = new Adw.ActionRow({title: PROVIDERS.get(id), subtitle: `Priority ${index + 1}`});
+                const up = new Gtk.Button({icon_name: 'go-up-symbolic', valign: Gtk.Align.CENTER, sensitive: index > 0, css_classes: ['flat']});
+                const down = new Gtk.Button({icon_name: 'go-down-symbolic', valign: Gtk.Align.CENTER, sensitive: index < order.length - 1, css_classes: ['flat']});
+                row.add_suffix(up); row.add_suffix(down); list.append(row);
+                up.connect('clicked', () => this._moveProvider(settings, order, index, -1));
+                down.connect('clicked', () => this._moveProvider(settings, order, index, 1));
+            });
+        };
+        render(); settings.connect('changed::provider-order', render);
+    }
+
+    _moveProvider(settings, currentOrder, index, direction) {
+        const next = index + direction;
+        if (next < 0 || next >= currentOrder.length) return;
+        const order = [...currentOrder];
+        [order[index], order[next]] = [order[next], order[index]];
+        settings.set_strv('provider-order', order);
     }
 
     _addAppearanceGroup(page, settings) {
-        const group = new Adw.PreferencesGroup({
-            title: 'Appearance',
-            description: 'Tune the translucent Spotlight card and motion.',
-        });
+        const group = new Adw.PreferencesGroup({title: 'Appearance', description: 'Keep Spotlight compact or make it roomier.'});
         page.add(group);
-
-        const themeModel = Gtk.StringList.new(THEME_MODES.map(([, label]) => label));
-        const themeRow = new Adw.ComboRow({
-            title: 'Theme',
-            model: themeModel,
+        this._combo(group, settings, 'theme-mode', 'Theme', THEME_MODES);
+        this._combo(group, settings, 'result-density', 'Result density', DENSITY_MODES);
+        const width = new Adw.SpinRow({
+            title: 'Panel width', subtitle: 'Automatically capped to the current monitor',
+            adjustment: new Gtk.Adjustment({lower: 420, upper: 900, step_increment: 20, page_increment: 100, value: settings.get_int('panel-width')}),
         });
-        themeRow.selected = Math.max(
-            0,
-            THEME_MODES.findIndex(([id]) => id === settings.get_string('theme-mode'))
-        );
-        group.add(themeRow);
-        themeRow.connect('notify::selected', () => {
-            const mode = THEME_MODES[themeRow.selected]?.[0] ?? 'system';
-            settings.set_string('theme-mode', mode);
+        group.add(width); settings.bind('panel-width', width, 'value', Gio.SettingsBindFlags.DEFAULT);
+        group.add(this._switch(settings, 'blur-enabled', 'Background blur', 'Use GNOME Shell backdrop blur when available.'));
+        const blur = new Adw.SpinRow({title: 'Blur strength', adjustment: new Gtk.Adjustment({lower: 0, upper: 40, step_increment: 1, page_increment: 5, value: settings.get_int('blur-strength')})});
+        group.add(blur); settings.bind('blur-strength', blur, 'value', Gio.SettingsBindFlags.DEFAULT);
+        const opacity = new Adw.SpinRow({
+            title: 'Card opacity', digits: 2,
+            adjustment: new Gtk.Adjustment({lower: 0.35, upper: 1, step_increment: 0.05, page_increment: 0.1, value: settings.get_double('background-opacity')}),
         });
-        settings.connect('changed::theme-mode', () => {
-            const index = THEME_MODES.findIndex(
-                ([id]) => id === settings.get_string('theme-mode')
-            );
-            themeRow.selected = Math.max(0, index);
-        });
-
-        const blurRow = this._createSwitchRow(
-            settings,
-            'blur-enabled',
-            'Background blur',
-            'Use GNOME Shell’s native backdrop blur when available.'
-        );
-        group.add(blurRow);
-
-        const blurStrengthRow = new Adw.SpinRow({
-            title: 'Blur strength',
-            adjustment: new Gtk.Adjustment({
-                lower: 0,
-                upper: 40,
-                step_increment: 1,
-                page_increment: 5,
-                value: settings.get_int('blur-strength'),
-            }),
-        });
-        group.add(blurStrengthRow);
-        settings.bind(
-            'blur-strength',
-            blurStrengthRow,
-            'value',
-            Gio.SettingsBindFlags.DEFAULT
-        );
-
-        const opacityRow = new Adw.SpinRow({
-            title: 'Card opacity',
-            subtitle: 'Lower values reveal more of the blurred background',
-            digits: 2,
-            adjustment: new Gtk.Adjustment({
-                lower: 0.35,
-                upper: 1,
-                step_increment: 0.05,
-                page_increment: 0.1,
-                value: settings.get_double('background-opacity'),
-            }),
-        });
-        group.add(opacityRow);
-        settings.bind(
-            'background-opacity',
-            opacityRow,
-            'value',
-            Gio.SettingsBindFlags.DEFAULT
-        );
-
-        group.add(this._createSwitchRow(
-            settings,
-            'animations-enabled',
-            'Animations',
-            'Also respects GNOME’s system animation and reduced-motion preferences.'
-        ));
+        group.add(opacity); settings.bind('background-opacity', opacity, 'value', Gio.SettingsBindFlags.DEFAULT);
+        group.add(this._switch(settings, 'animations-enabled', 'Animations', 'Also respects GNOME reduced-motion and animation preferences.'));
     }
 
-    _addResetGroup(page, window, settings) {
-        const group = new Adw.PreferencesGroup({
-            title: 'Defaults',
-            description: 'Restore every Spotlight preference to its original value.',
-        });
+    _addHistoryGroup(page, window, settings) {
+        const group = new Adw.PreferencesGroup({title: 'Local History', description: 'Ranking/query history stays on this device.'});
         page.add(group);
-
-        const row = new Adw.ActionRow({
-            title: 'Reset all settings',
-            subtitle: 'Shortcut, search providers, appearance, and web search settings',
-        });
-        group.add(row);
-
-        const button = new Gtk.Button({
-            label: 'Reset to Defaults',
-            valign: Gtk.Align.CENTER,
-            css_classes: ['destructive-action'],
-        });
-        row.add_suffix(button);
-        row.activatable_widget = button;
-
+        const row = new Adw.ActionRow({title: 'Clear learned history', subtitle: 'Removes saved queries and selected-result learning data.'});
+        const button = new Gtk.Button({label: 'Clear History', valign: Gtk.Align.CENTER});
+        row.add_suffix(button); row.activatable_widget = button; group.add(row);
         button.connect('clicked', () => {
-            const dialog = new Adw.MessageDialog({
-                transient_for: window,
-                heading: 'Reset all Spotlight settings?',
-                body: 'This restores every preference to its original default value.',
+            const dialog = new Adw.MessageDialog({transient_for: window, heading: 'Clear Spotlight history?', body: 'This removes locally stored search learning and query history.'});
+            dialog.add_response('cancel', 'Cancel'); dialog.add_response('clear', 'Clear');
+            dialog.set_default_response('cancel'); dialog.set_close_response('cancel');
+            dialog.set_response_appearance('clear', Adw.ResponseAppearance.DESTRUCTIVE);
+            dialog.connect('response', (_d, response) => {
+                if (response !== 'clear') return;
+                const path = GLib.build_filenamev([GLib.get_user_data_dir(), 'spotlight@alexchandan', 'usage.json']);
+                try { Gio.File.new_for_path(path).delete(null); } catch (_error) {}
+                settings.set_int('history-clear-token', settings.get_int('history-clear-token') + 1);
             });
-
-            dialog.add_response('cancel', 'Cancel');
-            dialog.add_response('reset', 'Reset');
-            dialog.set_default_response('cancel');
-            dialog.set_close_response('cancel');
-            dialog.set_response_appearance(
-                'reset',
-                Adw.ResponseAppearance.DESTRUCTIVE
-            );
-
-            dialog.connect('response', (_dialog, response) => {
-                if (response !== 'reset')
-                    return;
-
-                for (const key of SETTINGS_KEYS)
-                    settings.reset(key);
-            });
-
             dialog.present();
         });
     }
 
-    _createSwitchRow(settings, key, title, subtitle) {
-        const row = new Adw.ActionRow({title, subtitle});
-        const toggle = new Gtk.Switch({
-            valign: Gtk.Align.CENTER,
+    _addResetGroup(page, window, settings) {
+        const group = new Adw.PreferencesGroup({title: 'Defaults'}); page.add(group);
+        const row = new Adw.ActionRow({title: 'Reset all settings', subtitle: 'Restore shortcuts, ranking, providers, web search, and appearance.'});
+        const button = new Gtk.Button({label: 'Reset to Defaults', valign: Gtk.Align.CENTER, css_classes: ['destructive-action']});
+        row.add_suffix(button); row.activatable_widget = button; group.add(row);
+        button.connect('clicked', () => {
+            const dialog = new Adw.MessageDialog({transient_for: window, heading: 'Reset all Spotlight settings?', body: 'Your local learned history is not deleted.'});
+            dialog.add_response('cancel', 'Cancel'); dialog.add_response('reset', 'Reset');
+            dialog.set_default_response('cancel'); dialog.set_close_response('cancel');
+            dialog.set_response_appearance('reset', Adw.ResponseAppearance.DESTRUCTIVE);
+            dialog.connect('response', (_d, response) => {
+                if (response === 'reset') for (const key of SETTINGS_KEYS) settings.reset(key);
+            });
+            dialog.present();
         });
-        row.add_suffix(toggle);
-        row.activatable_widget = toggle;
+    }
+
+    _combo(group, settings, key, title, options) {
+        const row = new Adw.ComboRow({title, model: Gtk.StringList.new(options.map(([, label]) => label))});
+        const sync = () => row.selected = Math.max(0, options.findIndex(([id]) => id === settings.get_string(key)));
+        sync(); group.add(row);
+        row.connect('notify::selected', () => settings.set_string(key, options[row.selected]?.[0] ?? options[0][0]));
+        settings.connect(`changed::${key}`, sync);
+        return row;
+    }
+
+    _switch(settings, key, title, subtitle) {
+        const row = new Adw.ActionRow({title, subtitle});
+        const toggle = new Gtk.Switch({valign: Gtk.Align.CENTER});
+        row.add_suffix(toggle); row.activatable_widget = toggle;
         settings.bind(key, toggle, 'active', Gio.SettingsBindFlags.DEFAULT);
         return row;
     }
 
     _addAboutGroup(page) {
-        const group = new Adw.PreferencesGroup({title: 'About'});
-        page.add(group);
-
-        group.add(new Adw.ActionRow({
-            title: 'Spotlight',
-            subtitle: 'Apps · windows · files · settings · calculator · system actions · web',
-        }));
-        group.add(new Adw.ActionRow({
-            title: 'Power-user prefixes',
-            subtitle: 'app:  win:  file:  settings:  web:  system:  or = for calculator',
-        }));
-        group.add(new Adw.ActionRow({
-            title: 'Privacy',
-            subtitle: 'File search stays local. Calculator results are copied only when you activate them.',
-        }));
+        const group = new Adw.PreferencesGroup({title: 'Tips'}); page.add(group);
+        group.add(new Adw.ActionRow({title: 'Quick modes', subtitle: '@ apps   # files   ! system   ? web   ~ clipboard   = calculator'}));
+        group.add(new Adw.ActionRow({title: 'Result actions', subtitle: 'Enter open/switch · Ctrl+Enter new/reveal · Shift+Enter reveal · Alt+Enter app details'}));
+        group.add(new Adw.ActionRow({title: 'Query history', subtitle: 'Ctrl + Up / Down cycles through recent searches.'}));
+        group.add(new Adw.ActionRow({title: 'Privacy', subtitle: 'File indexing and learned history stay local; clipboard history is session-only.'}));
     }
 }

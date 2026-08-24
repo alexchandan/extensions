@@ -31,6 +31,7 @@ const ACTIONS = [
         method: 'activateRestart',
         availability: 'can-restart',
         subtitle: 'Opens GNOME confirmation',
+        danger: true,
     },
     {
         id: 'power-off',
@@ -40,6 +41,7 @@ const ACTIONS = [
         method: 'activatePowerOff',
         availability: 'can-power-off',
         subtitle: 'Opens GNOME confirmation',
+        danger: true,
     },
     {
         id: 'logout',
@@ -49,6 +51,7 @@ const ACTIONS = [
         method: 'activateLogout',
         availability: 'can-logout',
         subtitle: 'Opens GNOME confirmation',
+        danger: true,
     },
 ];
 
@@ -78,6 +81,8 @@ export class SystemProvider {
                 return {
                     id: `system:${action.id}`,
                     type: 'system',
+                    category: 'SYSTEM',
+                    danger: Boolean(action.danger),
                     title: action.title,
                     subtitle: action.subtitle,
                     iconName: action.iconName,

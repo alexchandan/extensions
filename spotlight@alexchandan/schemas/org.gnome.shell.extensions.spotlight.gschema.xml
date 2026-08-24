@@ -4,92 +4,81 @@
     <key name="toggle-shortcut" type="as">
       <default>['&lt;Super&gt;space']</default>
       <summary>Spotlight keyboard shortcut</summary>
-      <description>Keyboard accelerator used to open and close Spotlight.</description>
+    </key>
+    <key name="selected-text-shortcut" type="as">
+      <default>[]</default>
+      <summary>Search selected text shortcut</summary>
+      <description>Optional shortcut that opens Spotlight using the current primary text selection.</description>
     </key>
 
     <key name="result-count" type="i">
       <range min="3" max="20"/>
       <default>8</default>
       <summary>Maximum visible results</summary>
-      <description>Total number of results shown at once.</description>
+    </key>
+    <key name="panel-width" type="i">
+      <range min="420" max="900"/>
+      <default>720</default>
+      <summary>Spotlight panel width</summary>
+    </key>
+    <key name="result-density" type="s">
+      <choices><choice value="comfortable"/><choice value="compact"/></choices>
+      <default>'comfortable'</default>
+      <summary>Result row density</summary>
+    </key>
+    <key name="show-category-badges" type="b">
+      <default>true</default>
+      <summary>Show result category badges</summary>
     </key>
 
     <key name="web-engine" type="s">
       <choices>
-        <choice value="google"/>
-        <choice value="duckduckgo"/>
-        <choice value="brave"/>
-        <choice value="bing"/>
-        <choice value="custom"/>
+        <choice value="google"/><choice value="duckduckgo"/><choice value="brave"/><choice value="bing"/><choice value="custom"/>
       </choices>
       <default>'google'</default>
       <summary>Web search engine</summary>
     </key>
-
     <key name="custom-search-url" type="s">
       <default>'https://www.google.com/search?q=%s'</default>
       <summary>Custom web search URL</summary>
-      <description>HTTP or HTTPS URL template. Use %s where the URL-encoded query should be inserted.</description>
     </key>
-
     <key name="show-web-search" type="b">
       <default>true</default>
       <summary>Always show web search</summary>
-      <description>Keep web search as the final result in normal searches.</description>
     </key>
 
-    <key name="enable-window-search" type="b">
-      <default>true</default>
-      <summary>Search open windows</summary>
+    <key name="enable-window-search" type="b"><default>true</default><summary>Search open windows</summary></key>
+    <key name="enable-file-search" type="b"><default>true</default><summary>Search local files</summary></key>
+    <key name="enable-settings-search" type="b"><default>true</default><summary>Search GNOME Settings panels</summary></key>
+    <key name="enable-clipboard-search" type="b">
+      <default>false</default>
+      <summary>Search session clipboard history</summary>
+      <description>Stores a small clipboard history only in memory for the current GNOME Shell session.</description>
     </key>
-
-    <key name="enable-file-search" type="b">
-      <default>true</default>
-      <summary>Search local files</summary>
-    </key>
-
-    <key name="enable-settings-search" type="b">
-      <default>true</default>
-      <summary>Search GNOME Settings panels</summary>
-    </key>
-
     <key name="file-index-limit" type="i">
-      <range min="500" max="10000"/>
-      <default>4000</default>
-      <summary>Maximum local file index size</summary>
-      <description>Maximum number of local file and folder names kept in memory.</description>
+      <range min="500" max="10000"/><default>4000</default><summary>Maximum local file index size</summary>
     </key>
+
+    <key name="provider-order" type="as">
+      <default>['apps', 'files', 'windows', 'settings', 'calculator', 'system', 'clipboard', 'web']</default>
+      <summary>Preferred search provider order</summary>
+      <description>A soft ranking preference. Relevance can still override provider order.</description>
+    </key>
+    <key name="prefer-exact-matches" type="b"><default>true</default><summary>Prefer exact and word matches</summary></key>
+    <key name="learn-ranking" type="b"><default>true</default><summary>Learn ranking from local usage</summary></key>
+    <key name="boost-running-apps" type="b"><default>true</default><summary>Boost running applications</summary></key>
+    <key name="boost-favorite-apps" type="b"><default>true</default><summary>Boost favorite applications</summary></key>
+    <key name="boost-recent-results" type="b"><default>true</default><summary>Boost recent and frequent results</summary></key>
+    <key name="query-history-enabled" type="b"><default>true</default><summary>Enable local query history</summary></key>
+    <key name="history-clear-token" type="i"><default>0</default><summary>Internal history clear revision</summary></key>
 
     <key name="theme-mode" type="s">
-      <choices>
-        <choice value="system"/>
-        <choice value="dark"/>
-        <choice value="light"/>
-      </choices>
-      <default>'system'</default>
-      <summary>Spotlight theme</summary>
+      <choices><choice value="system"/><choice value="dark"/><choice value="light"/></choices>
+      <default>'system'</default><summary>Spotlight theme</summary>
     </key>
-
-    <key name="blur-enabled" type="b">
-      <default>true</default>
-      <summary>Enable background blur</summary>
-    </key>
-
-    <key name="blur-strength" type="i">
-      <range min="0" max="40"/>
-      <default>24</default>
-      <summary>Background blur strength</summary>
-    </key>
-
-    <key name="background-opacity" type="d">
-      <range min="0.35" max="1.0"/>
-      <default>0.72</default>
-      <summary>Spotlight card opacity</summary>
-    </key>
-
-    <key name="animations-enabled" type="b">
-      <default>true</default>
-      <summary>Enable Spotlight animations</summary>
-    </key>
+    <key name="blur-enabled" type="b"><default>true</default><summary>Enable background blur</summary></key>
+    <key name="blur-strength" type="i"><range min="0" max="40"/><default>24</default><summary>Background blur strength</summary></key>
+    <key name="background-opacity" type="d"><range min="0.35" max="1.0"/><default>0.72</default><summary>Spotlight card opacity</summary></key>
+    <key name="animations-enabled" type="b"><default>true</default><summary>Enable Spotlight animations</summary></key>
   </schema>
 </schemalist>

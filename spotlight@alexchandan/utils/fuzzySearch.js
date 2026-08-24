@@ -14,7 +14,7 @@ function wordPrefixScore(text, query) {
     if (matchingWord < 0)
         return -1;
 
-    return 880 - matchingWord * 8;
+    return 900 - matchingWord * 8;
 }
 
 function initialsScore(text, query) {
@@ -28,9 +28,9 @@ function initialsScore(text, query) {
         .join('');
 
     if (initials === query)
-        return 850;
+        return 930;
     if (initials.startsWith(query))
-        return 820 - (initials.length - query.length) * 3;
+        return 900 - (initials.length - query.length) * 3;
 
     return -1;
 }
@@ -93,6 +93,30 @@ export function fuzzyScore(value, rawQuery) {
     return subsequenceScore(text, query);
 }
 
+export function getMatchTier(value, rawQuery) {
+    const text = normalizeText(value);
+    const query = normalizeText(rawQuery);
+    if (!text || !query)
+        return 'none';
+    if (text === query)
+        return 'exact';
+    if (text.startsWith(query))
+        return 'prefix';
+
+    const words = text.split(/[^a-z0-9]+/).filter(Boolean);
+    if (words.some(word => word === query))
+        return 'word-exact';
+    if (words.some(word => word.startsWith(query)))
+        return 'word-prefix';
+
+    const initials = words.map(word => word[0]).join('');
+    if (query.length >= 2 && (initials === query || initials.startsWith(query)))
+        return 'acronym';
+    if (text.includes(query))
+        return 'substring';
+    return fuzzyScore(text, query) >= 0 ? 'fuzzy' : 'none';
+}
+
 export function bestFieldScore(query, fields) {
     let best = -1;
 
@@ -114,11 +138,23 @@ export function bestFieldScore(query, fields) {
 export function parseScopedQuery(rawText) {
     const text = rawText.trim();
 
+    const shortPrefix = text[0];
+    const shortMap = {
+        '@': 'apps',
+        '#': 'files',
+        '!': 'system',
+        '?': 'web',
+        '~': 'clipboard',
+    };
+    if (shortMap[shortPrefix])
+        return {scope: shortMap[shortPrefix], term: text.slice(1).trim(), explicit: true};
+
     if (text.startsWith('='))
         return {scope: 'calculator', term: text.slice(1).trim(), explicit: true};
 
-    const match = text.match(/^(app|apps|win|window|windows|file|files|setting|settings|web|system|power)\s*:\s*(.*)$/i)
-        ?? text.match(/^(app|apps|win|window|windows|file|files|setting|settings|web|system|power)\s+(.+)$/i);
+    const prefixes = 'app|apps|win|window|windows|file|files|setting|settings|web|system|power|clip|clipboard';
+    const match = text.match(new RegExp(`^(${prefixes})\\s*:\\s*(.*)$`, 'i'))
+        ?? text.match(new RegExp(`^(${prefixes})\\s+(.+)$`, 'i'));
 
     if (!match)
         return {scope: 'all', term: text, explicit: false};
@@ -139,6 +175,8 @@ export function parseScopedQuery(rawText) {
         web: 'web',
         system: 'system',
         power: 'system',
+        clip: 'clipboard',
+        clipboard: 'clipboard',
     };
 
     return {scope: scopeMap[prefix], term, explicit: true};

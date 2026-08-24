@@ -40,12 +40,22 @@ export class WindowProvider {
             results.push({
                 id: `window:${window.get_id?.() ?? title}`,
                 type: 'window',
+                category: 'WINDOW',
                 title,
                 subtitle: appName ? `${appName} · Open window` : 'Open window',
                 gicon: app?.get_app_info?.()?.get_icon?.() ?? null,
                 iconName: app ? null : 'focus-windows-symbolic',
                 score: score + 150,
+                historyData: null,
                 activate: () => ShellMain.activateWindow(window),
+                actions: {
+                    new: () => {
+                        if (app?.can_open_new_window?.())
+                            app.open_new_window(-1);
+                        else
+                            ShellMain.activateWindow(window);
+                    },
+                },
             });
         }
 
