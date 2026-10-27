@@ -47,13 +47,20 @@ export class WindowProvider {
                 iconName: app ? null : 'focus-windows-symbolic',
                 score: score + 150,
                 historyData: null,
-                activate: () => ShellMain.activateWindow(window),
+                shortcutLabel: 'Switch ↵',
+                activate: () => this._activateWindow(window),
                 actions: {
                     new: () => {
                         if (app?.can_open_new_window?.())
                             app.open_new_window(-1);
                         else
-                            ShellMain.activateWindow(window);
+                            this._activateWindow(window);
+                    },
+                    alternate: () => {
+                        if (app?.can_open_new_window?.())
+                            app.open_new_window(-1);
+                        else
+                            this._activateWindow(window);
                     },
                 },
             });
@@ -62,6 +69,27 @@ export class WindowProvider {
         return results
             .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
             .slice(0, limit);
+    }
+
+    _activateWindow(window) {
+        const time = global.get_current_time();
+        const workspace = window.get_workspace?.();
+        const workspaceManager = global.workspace_manager;
+        const activeWorkspaceNum = workspaceManager?.get_active_workspace_index?.() ?? 0;
+        const windowWorkspaceNum = workspace ? workspace.index() : activeWorkspaceNum;
+
+        try {
+            ShellMain.activateWindow(window, time, windowWorkspaceNum);
+        } catch (_error) {
+            try {
+                if (workspace && windowWorkspaceNum !== activeWorkspaceNum)
+                    workspace.activate_with_focus(window, time);
+                else
+                    window.activate(time);
+            } catch (err) {
+                logError(err, 'Spotlight: failed to activate window');
+            }
+        }
     }
 
     destroy() {

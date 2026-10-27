@@ -50,7 +50,7 @@ class ResultItem extends St.BoxLayout {
             reactive: true,
             track_hover: true,
             can_focus: false,
-            vertical: false,
+            orientation: Clutter.Orientation.HORIZONTAL,
             x_expand: true,
         });
 
@@ -65,7 +65,7 @@ class ResultItem extends St.BoxLayout {
         this.add_child(this._icon);
 
         this._textBox = new St.BoxLayout({
-            vertical: true,
+            orientation: Clutter.Orientation.VERTICAL,
             style_class: 'spotlight-result-text',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
@@ -88,7 +88,7 @@ class ResultItem extends St.BoxLayout {
 
         this._rightBox = new St.BoxLayout({
             style_class: 'spotlight-result-meta',
-            vertical: false,
+            orientation: Clutter.Orientation.HORIZONTAL,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this.add_child(this._rightBox);

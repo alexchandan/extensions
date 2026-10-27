@@ -51,7 +51,7 @@
     <key name="enable-file-search" type="b"><default>true</default><summary>Search local files</summary></key>
     <key name="enable-settings-search" type="b"><default>true</default><summary>Search GNOME Settings panels</summary></key>
     <key name="enable-clipboard-search" type="b">
-      <default>false</default>
+      <default>true</default>
       <summary>Search session clipboard history</summary>
       <description>Stores a small clipboard history only in memory for the current GNOME Shell session.</description>
     </key>

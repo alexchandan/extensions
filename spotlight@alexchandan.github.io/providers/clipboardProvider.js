@@ -15,13 +15,12 @@ export class ClipboardProvider {
     capture(callback = null) {
         this._clipboard.get_text((St.ClipboardType.CLIPBOARD ?? 1), (_clipboard, text) => {
             const cleaned = (text ?? '').trim();
-            if (!cleaned || cleaned.length > 4000)
-                return;
-
-            this._history = [
-                cleaned,
-                ...this._history.filter(item => item !== cleaned),
-            ].slice(0, MAX_HISTORY);
+            if (cleaned && cleaned.length <= 4000) {
+                this._history = [
+                    cleaned,
+                    ...this._history.filter(item => item !== cleaned),
+                ].slice(0, MAX_HISTORY);
+            }
             callback?.();
         });
     }
@@ -58,10 +57,18 @@ export class ClipboardProvider {
                     iconName: 'edit-paste-symbolic',
                     score,
                     shortcutLabel: 'Copy ↵',
-                    activate: () => this._clipboard.set_text(
-                        (St.ClipboardType.CLIPBOARD ?? 1),
-                        text
-                    ),
+                    activate: () => {
+                        this._clipboard.set_text(
+                            (St.ClipboardType.CLIPBOARD ?? 1),
+                            text
+                        );
+                        try {
+                            this._clipboard.set_text(
+                                (St.ClipboardType.PRIMARY ?? 0),
+                                text
+                            );
+                        } catch (_e) {}
+                    },
                 };
             })
             .filter(Boolean)

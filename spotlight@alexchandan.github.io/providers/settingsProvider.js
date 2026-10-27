@@ -56,6 +56,7 @@ export class SettingsProvider {
                     subtitle: entry.description || 'GNOME Settings',
                     gicon: entry.appInfo.get_icon?.() ?? null,
                     iconName: 'org.gnome.Settings-symbolic',
+                    shortcutLabel: 'Open ↵',
                     score: score + 95,
                     activate: () => entry.appInfo.launch(
                         [],

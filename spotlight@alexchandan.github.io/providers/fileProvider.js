@@ -213,12 +213,48 @@ export class FileProvider {
     }
 
     search(query, limit = 6, {explicit = false} = {}) {
-        if (!this._enabled)
+        if (!this._enabled) {
+            if (explicit) {
+                return [{
+                    id: 'file:disabled',
+                    type: 'info',
+                    title: 'File search is disabled',
+                    subtitle: 'Enable “Search local files” in Spotlight Preferences to search files.',
+                    iconName: 'folder-symbolic',
+                    score: 0,
+                    activate: null,
+                }];
+            }
             return [];
+        }
 
         const term = query.trim();
-        if (term.length < 2)
+        const minLength = explicit ? 1 : 2;
+        if (term.length < minLength) {
+            if (explicit) {
+                if (this._isIndexing) {
+                    return [{
+                        id: 'file:indexing',
+                        type: 'info',
+                        title: 'Indexing your files…',
+                        subtitle: 'Search results will appear as the local index is built.',
+                        iconName: 'content-loading-symbolic',
+                        score: 1,
+                        activate: null,
+                    }];
+                }
+                return [{
+                    id: 'file:hint',
+                    type: 'info',
+                    title: 'Search local files',
+                    subtitle: 'Type a filename or path to search indexed files (e.g. # report or # .pdf)',
+                    iconName: 'folder-saved-search-symbolic',
+                    score: 1,
+                    activate: null,
+                }];
+            }
             return [];
+        }
 
         const matches = [];
         for (const entry of this._entries) {
@@ -244,9 +280,10 @@ export class FileProvider {
                     entry.file.get_uri(),
                     global.create_app_launch_context(timestamp || global.get_current_time(), -1)
                 ),
+                shortcutLabel: 'Open ↵',
                 actions: {
-                    new: timestamp => this._openContainingFolder(entry, timestamp),
-                    alternate: timestamp => this._openContainingFolder(entry, timestamp),
+                    new: timestamp => this._revealFile(entry, timestamp),
+                    alternate: timestamp => this._revealFile(entry, timestamp),
                 },
             });
         }
@@ -296,14 +333,42 @@ export class FileProvider {
                         entry.file.get_uri(),
                         global.create_app_launch_context(timestamp || global.get_current_time(), -1)
                     ),
+                    shortcutLabel: 'Open ↵',
                     actions: {
-                        new: timestamp => this._openContainingFolder(entry, timestamp),
-                        alternate: timestamp => this._openContainingFolder(entry, timestamp),
+                        new: timestamp => this._revealFile(entry, timestamp),
+                        alternate: timestamp => this._revealFile(entry, timestamp),
                     },
                 };
             })
             .filter(Boolean)
             .slice(0, limit);
+    }
+
+    _revealFile(entry, timestamp = 0) {
+        try {
+            const bus = Gio.DBus.session;
+            const uri = entry.file.get_uri();
+            bus.call(
+                'org.freedesktop.FileManager1',
+                '/org/freedesktop/FileManager1',
+                'org.freedesktop.FileManager1',
+                'ShowItems',
+                new GLib.Variant('(ass)', [[uri], '']),
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (connection, result) => {
+                    try {
+                        connection.call_finish(result);
+                    } catch (_err) {
+                        this._openContainingFolder(entry, timestamp);
+                    }
+                }
+            );
+        } catch (_e) {
+            this._openContainingFolder(entry, timestamp);
+        }
     }
 
     _openContainingFolder(entry, timestamp = 0) {

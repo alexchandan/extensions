@@ -152,9 +152,9 @@ export function parseScopedQuery(rawText) {
     if (text.startsWith('='))
         return {scope: 'calculator', term: text.slice(1).trim(), explicit: true};
 
-    const prefixes = 'app|apps|win|window|windows|file|files|setting|settings|web|system|power|clip|clipboard';
+    const prefixes = 'app|apps|win|window|windows|file|files|setting|settings|web|system|power|clip|clipboard|calc|calculator';
     const match = text.match(new RegExp(`^(${prefixes})\\s*:\\s*(.*)$`, 'i'))
-        ?? text.match(new RegExp(`^(${prefixes})\\s+(.+)$`, 'i'));
+        ?? text.match(new RegExp(`^(${prefixes})\\s+(.*)$`, 'i'));
 
     if (!match)
         return {scope: 'all', term: text, explicit: false};
@@ -177,6 +177,8 @@ export function parseScopedQuery(rawText) {
         power: 'system',
         clip: 'clipboard',
         clipboard: 'clipboard',
+        calc: 'calculator',
+        calculator: 'calculator',
     };
 
     return {scope: scopeMap[prefix], term, explicit: true};

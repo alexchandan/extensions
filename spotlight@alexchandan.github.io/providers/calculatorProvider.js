@@ -113,10 +113,44 @@ function formatResult(value) {
 }
 
 export class CalculatorProvider {
-    search(query) {
-        const expression = query.trim();
-        if (!expression || !/\d/.test(expression))
+    search(query, {explicit = false} = {}) {
+        const raw = query.trim();
+        if (!raw) {
+            if (explicit) {
+                return [{
+                    id: 'calculator:hint',
+                    type: 'calculator',
+                    category: 'CALC',
+                    title: 'Calculator',
+                    subtitle: 'Type a math expression (e.g. = 45 * 12 or (100 - 20) / 4)',
+                    iconName: 'accessories-calculator-symbolic',
+                    score: 1500,
+                    activate: null,
+                }];
+            }
             return [];
+        }
+
+        const expression = raw
+            .replace(/[×xX]/g, '*')
+            .replace(/÷/g, '/')
+            .replace(/,/g, '.');
+
+        if (!/\d/.test(expression)) {
+            if (explicit) {
+                return [{
+                    id: 'calculator:hint',
+                    type: 'calculator',
+                    category: 'CALC',
+                    title: 'Calculator',
+                    subtitle: 'Type a math expression (e.g. = 45 * 12 or (100 - 20) / 4)',
+                    iconName: 'accessories-calculator-symbolic',
+                    score: 1500,
+                    activate: null,
+                }];
+            }
+            return [];
+        }
 
         if (!/^[\d\s+\-*/%^().]+$/.test(expression))
             return [];
@@ -126,22 +160,41 @@ export class CalculatorProvider {
             const formatted = formatResult(value);
 
             return [{
-                id: `calculator:${expression}`,
+                id: `calculator:${raw}`,
                 type: 'calculator',
                 category: 'CALC',
                 title: formatted,
-                subtitle: `${expression} =`,
+                subtitle: `${raw} =`,
                 iconName: 'accessories-calculator-symbolic',
                 shortcutLabel: 'Copy ↵',
                 score: 1500,
                 activate: () => {
-                    St.Clipboard.get_default().set_text(
-                        St.ClipboardType.CLIPBOARD,
+                    const clipboard = St.Clipboard.get_default();
+                    clipboard.set_text(
+                        St.ClipboardType.CLIPBOARD ?? 1,
                         formatted
                     );
+                    try {
+                        clipboard.set_text(
+                            St.ClipboardType.PRIMARY ?? 0,
+                            formatted
+                        );
+                    } catch (_e) {}
                 },
             }];
         } catch (_error) {
+            if (explicit) {
+                return [{
+                    id: 'calculator:evaluating',
+                    type: 'calculator',
+                    category: 'CALC',
+                    title: 'Calculator',
+                    subtitle: `Calculating: ${raw}…`,
+                    iconName: 'accessories-calculator-symbolic',
+                    score: 1500,
+                    activate: null,
+                }];
+            }
             return [];
         }
     }

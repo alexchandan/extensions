@@ -60,10 +60,28 @@ export class SystemProvider {
         this._systemActions = SystemActions.getDefault();
     }
 
-    search(query, limit = 5) {
+    search(query, limit = 5, {explicit = false} = {}) {
         const term = query.trim();
-        if (term.length < 2)
+        if (!term) {
+            if (explicit) {
+                return ACTIONS
+                    .filter(action => this._isAvailable(action))
+                    .map((action, index) => ({
+                        id: `system:${action.id}`,
+                        type: 'system',
+                        category: 'SYSTEM',
+                        danger: Boolean(action.danger),
+                        title: action.title,
+                        subtitle: action.subtitle,
+                        iconName: action.iconName,
+                        shortcutLabel: 'Run ↵',
+                        score: 1000 - index,
+                        activate: () => this._activate(action),
+                    }))
+                    .slice(0, limit);
+            }
             return [];
+        }
 
         return ACTIONS
             .map(action => {
@@ -86,6 +104,7 @@ export class SystemProvider {
                     title: action.title,
                     subtitle: action.subtitle,
                     iconName: action.iconName,
+                    shortcutLabel: 'Run ↵',
                     score: score + 260,
                     activate: () => this._activate(action),
                 };

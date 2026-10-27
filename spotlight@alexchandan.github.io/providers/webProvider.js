@@ -28,13 +28,32 @@ export class WebProvider {
 
     search(query, {explicit = false} = {}) {
         const term = query.trim();
-        if (!term)
-            return [];
-
         const engineId = this._settings.get_string('web-engine');
         const engine = engineId === 'custom'
             ? {label: 'the web', url: value => this._customUrl(value)}
             : (ENGINES[engineId] ?? ENGINES.google);
+
+        if (!term) {
+            if (explicit) {
+                return [{
+                    id: `web:${engineId}:hint`,
+                    type: 'web',
+                    category: 'WEB',
+                    title: `Search the web with ${engine.label}`,
+                    subtitle: 'Type your search query and press Enter to search in default browser',
+                    iconName: 'web-browser-symbolic',
+                    shortcutLabel: 'Search ↵',
+                    score: 1400,
+                    activate: () => {
+                        Gio.AppInfo.launch_default_for_uri(
+                            engine.url(''),
+                            global.create_app_launch_context(0, -1)
+                        );
+                    },
+                }];
+            }
+            return [];
+        }
 
         return [{
             id: `web:${engineId}:${term}`,
@@ -43,6 +62,7 @@ export class WebProvider {
             title: `Search ${engine.label} for “${term}”`,
             subtitle: 'Open in default browser',
             iconName: 'web-browser-symbolic',
+            shortcutLabel: 'Search ↵',
             score: explicit ? 1400 : -1000,
             activate: () => {
                 Gio.AppInfo.launch_default_for_uri(

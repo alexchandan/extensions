@@ -125,7 +125,7 @@ export class SpotlightOverlay {
 
         this._container = new St.BoxLayout({
             style_class: 'spotlight-container',
-            vertical: true,
+            orientation: Clutter.Orientation.VERTICAL,
         });
 
         this._entry = new St.Entry({
@@ -142,6 +142,8 @@ export class SpotlightOverlay {
         this._entry.clutter_text.connect('text-changed', () => this._onTextChanged());
         this._entry.clutter_text.connect('key-press-event', (_actor, event) =>
             this._onKeyPress(event));
+        this._entry.clutter_text.connect('activate', () =>
+            this._activateSelected(global.get_current_time(), 'default'));
         this._container.add_child(this._entry);
 
         this._resultsScroll = new St.ScrollView({
@@ -150,7 +152,7 @@ export class SpotlightOverlay {
         });
         this._resultsBox = new St.BoxLayout({
             style_class: 'spotlight-results',
-            vertical: true,
+            orientation: Clutter.Orientation.VERTICAL,
             x_expand: true,
         });
         this._resultsScroll.set_child(this._resultsBox);
@@ -161,6 +163,8 @@ export class SpotlightOverlay {
             visible: false,
             reactive: true,
         });
+        this._topActor.connect('key-press-event', (_actor, event) =>
+            this._onKeyPress(event));
         this._topActor.add_child(this._dimmer);
         this._topActor.add_child(this._container);
         ShellMain.layoutManager.uiGroup.add_child(this._topActor);
@@ -311,13 +315,18 @@ export class SpotlightOverlay {
         const brightness = mode === 'dark' ? 0.72 : 0.9;
 
         try {
+            // GNOME 46+ uses radius, which is twice the sigma used by GNOME 45.
+            const usesRadius = typeof Shell.BlurEffect.prototype.set_radius === 'function';
+            const blurProperty = usesRadius ? 'radius' : 'sigma';
+            const blurScale = usesRadius ? 2 : 1;
+
             this._dimmer.add_effect(new Shell.BlurEffect({
-                sigma: Math.max(1, Math.round(strength * 0.55)),
+                [blurProperty]: Math.max(1, Math.round(strength * 0.55)) * blurScale,
                 brightness: Math.min(1, brightness + 0.08),
                 mode: Shell.BlurMode.BACKGROUND,
             }));
             this._container.add_effect(new Shell.BlurEffect({
-                sigma: strength,
+                [blurProperty]: strength * blurScale,
                 brightness,
                 mode: Shell.BlurMode.BACKGROUND,
             }));
@@ -376,7 +385,8 @@ export class SpotlightOverlay {
         try {
             if (this._stSettings.enable_animations === false)
                 return false;
-            if ('reduced_motion' in this._stSettings && this._stSettings.reduced_motion)
+            const rm = this._stSettings.reduced_motion ?? this._stSettings.reducedMotion;
+            if (rm === true || (St.ReducedMotion && rm === St.ReducedMotion.REDUCE))
                 return false;
         } catch (_error) {
             // Use the extension preference if the Shell setting is unavailable.
@@ -407,12 +417,10 @@ export class SpotlightOverlay {
         if (!initialText)
             this._showQuickResults();
 
-        if (this._settings.get_boolean('enable-clipboard-search')) {
-            this._providers.clipboard.capture(() => {
-                if (this._isOpen && this._activeSearchTerm)
-                    this._refreshVisibleResults();
-            });
-        }
+        this._providers.clipboard.capture(() => {
+            if (this._isOpen && this._activeSearchTerm)
+                this._refreshVisibleResults();
+        });
 
         this._grab = ShellMain.pushModal(this._topActor, {
             actionMode: Shell.ActionMode.POPUP,
@@ -551,7 +559,7 @@ export class SpotlightOverlay {
                 action = 'alternate';
             else if (ctrl)
                 action = 'new';
-            this._activateSelected(event.get_time(), action);
+            this._activateSelected(global.get_current_time(), action);
             return Clutter.EVENT_STOP;
         }
         default:
@@ -650,9 +658,17 @@ export class SpotlightOverlay {
     }
 
     _activateSelected(timestamp = 0, action = 'default') {
-        if (this._selectedIndex < 0 || !this._isActivatable(this._selectedIndex))
+        if (!this._isOpen)
             return;
-        this._activateResult(this._currentResults[this._selectedIndex], timestamp, action);
+
+        let index = this._selectedIndex;
+        if (index < 0 || !this._isActivatable(index))
+            index = this._currentResults.findIndex(result => typeof result?.activate === 'function');
+
+        if (index < 0 || !this._isActivatable(index))
+            return;
+
+        this._activateResult(this._currentResults[index], timestamp, action);
     }
 
     _activateResult(result, timestamp = 0, action = 'default') {
@@ -663,17 +679,18 @@ export class SpotlightOverlay {
             ? result.activate
             : (result.actions?.[action] ?? result.activate);
         const query = this._activeSearchTerm;
+        const rawQuery = this._entry.get_text().trim();
 
         if (this._settings.get_boolean('learn-ranking'))
-            this._usageStore.recordActivation(query, result);
+            this._usageStore.recordActivation(query, result, rawQuery);
         else if (this._settings.get_boolean('query-history-enabled'))
-            this._usageStore.recordQuery(query);
+            this._usageStore.recordQuery(rawQuery || query);
 
         this.close({immediate: true});
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             try {
-                fn(timestamp);
+                fn(timestamp || global.get_current_time());
             } catch (error) {
                 logError(error, `Spotlight: failed to activate ${result.title}`);
                 global.notify_error?.('Spotlight', `Could not open “${result.title}”.`);
@@ -702,6 +719,8 @@ export class SpotlightOverlay {
 
         const parsed = parseScopedQuery(text);
         this._activeSearchTerm = parsed.term;
+        if (parsed.scope === 'clipboard' && this._providers?.clipboard)
+            this._providers.clipboard.capture();
         const results = this._search(parsed);
         this._renderResults(results, parsed.term);
     }
@@ -762,27 +781,34 @@ export class SpotlightOverlay {
 
     _search({scope, term, explicit}) {
         const maxResults = this._settings.get_int('result-count');
-        if (!term && scope !== 'clipboard')
+        if (!term && scope === 'all')
             return [];
 
         if (scope !== 'all') {
             switch (scope) {
             case 'apps':
-                return this._providers.apps.search(term, maxResults);
+                return !term
+                    ? this._providers.apps.getQuickResults(maxResults)
+                    : this._providers.apps.search(term, maxResults);
             case 'windows':
                 return this._providers.windows.search(term, maxResults);
             case 'files':
+                if (!term) {
+                    const recentEvents = this._usageStore.getRecentEvents('file', maxResults);
+                    const recentFiles = this._providers.files.getRecentResults(recentEvents, maxResults);
+                    if (recentFiles.length > 0)
+                        return recentFiles;
+                    return this._providers.files.search('', maxResults, {explicit: true});
+                }
                 return this._providers.files.search(term, maxResults, {explicit: true});
             case 'settings':
                 return this._providers.settings.search(term, maxResults);
             case 'calculator':
-                return this._providers.calculator.search(term);
+                return this._providers.calculator.search(term, {explicit: true});
             case 'system':
-                return this._providers.system.search(term, maxResults);
+                return this._providers.system.search(term, maxResults, {explicit: true});
             case 'clipboard':
-                return this._settings.get_boolean('enable-clipboard-search')
-                    ? this._providers.clipboard.search(term, maxResults, {explicit: true})
-                    : [];
+                return this._providers.clipboard.search(term, maxResults, {explicit: true});
             case 'web':
                 return this._providers.web.search(term, {explicit: true});
             default:

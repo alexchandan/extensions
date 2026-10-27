@@ -37,7 +37,7 @@ export class AppProvider {
         this._usageRanks.clear();
 
         try {
-            const mostUsed = this._usage?.get_most_used?.('') ?? [];
+            const mostUsed = this._usage?.get_most_used?.() ?? [];
             mostUsed.slice(0, 30).forEach((app, index) => {
                 const id = app?.get_id?.();
                 if (id)
@@ -191,11 +191,12 @@ export class AppProvider {
             subtitle,
             gicon: entry.appInfo.get_icon?.() ?? null,
             score,
-            shortcutLabel: isRunning ? 'Switch ↵' : '',
+            shortcutLabel: isRunning ? 'Switch ↵' : 'Open ↵',
             historyData: {appId: entry.id},
             activate: timestamp => this._activate(entry, timestamp),
             actions: {
                 new: timestamp => this._openNew(entry, timestamp),
+                alternate: timestamp => this._openNew(entry, timestamp),
                 details: timestamp => this._showDetails(entry, timestamp),
             },
         };
@@ -207,12 +208,12 @@ export class AppProvider {
 
         if (app) {
             try {
-                app.activate_full(-1, eventTime);
+                app.activate();
                 return;
             } catch (error) {
-                logError(error, `Spotlight: activate_full failed for ${entry.name}`);
+                logError(error, `Spotlight: app.activate failed for ${entry.name}`);
                 try {
-                    app.activate();
+                    app.activate_full(-1, eventTime);
                     return;
                 } catch (_fallbackError) {
                     // Fall through to desktop launch.
@@ -244,15 +245,30 @@ export class AppProvider {
         if (!entry.id)
             return this._activate(entry, timestamp);
 
-        const uri = `appstream://${entry.id}`;
+        const eventTime = timestamp || global.get_current_time();
+        const context = global.create_app_launch_context(eventTime, -1);
+
+        const cleanId = entry.id.endsWith('.desktop') ? entry.id.slice(0, -8) : entry.id;
         try {
-            Gio.AppInfo.launch_default_for_uri(
-                uri,
-                global.create_app_launch_context(timestamp || global.get_current_time(), -1)
-            );
-        } catch (_error) {
-            this._activate(entry, timestamp);
+            if (Gio.AppInfo.launch_default_for_uri(`appstream://${cleanId}`, context))
+                return;
+        } catch (_err) {
+            try {
+                if (Gio.AppInfo.launch_default_for_uri(`appstream://${entry.id}`, context))
+                    return;
+            } catch (_err2) {}
         }
+
+        try {
+            const sub = Gio.Subprocess.new(
+                ['gnome-control-center', 'applications', entry.id],
+                Gio.SubprocessFlags.NONE
+            );
+            if (sub)
+                return;
+        } catch (_err3) {}
+
+        this._activate(entry, timestamp);
     }
 
     destroy() {

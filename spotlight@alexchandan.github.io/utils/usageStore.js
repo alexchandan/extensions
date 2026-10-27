@@ -75,8 +75,8 @@ export class UsageStore {
     }
 
     recordQuery(query) {
-        const cleaned = query.trim();
-        if (cleaned.length < 2)
+        const cleaned = (query ?? '').trim();
+        if (cleaned.length < 1)
             return;
 
         this._rememberQuery(cleaned);
@@ -92,20 +92,21 @@ export class UsageStore {
         ].slice(0, MAX_QUERIES);
     }
 
-    recordActivation(query, result) {
+    recordActivation(query, result, rawQuery = '') {
         if (!result?.id)
             return;
 
-        const cleanedQuery = query.trim();
-        if (cleanedQuery.length >= 2)
-            this._rememberQuery(cleanedQuery);
+        const queryToSave = (rawQuery || query || '').trim();
+        if (queryToSave.length >= 1)
+            this._rememberQuery(queryToSave);
 
+        const cleanedQuery = (query || '').trim();
         this._data.events.push({
             id: result.id,
             type: result.type ?? '',
             title: result.title ?? '',
             subtitle: result.subtitle ?? '',
-            query: normalizeText(cleanedQuery),
+            query: normalizeText(cleanedQuery || queryToSave),
             timestamp: nowMs(),
             historyData: result.historyData ?? null,
         });
