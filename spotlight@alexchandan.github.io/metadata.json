@@ -1,7 +1,7 @@
 {
   "uuid": "spotlight@alexchandan.github.io",
   "name": "Spotlight",
-  "description": "A fast Spotlight-style launcher for GNOME Shell with fuzzy app search, window switching, local files and Settings, calculator, safe system actions, optional session-only clipboard history, local usage-aware ranking, selected-text search, and web search. File names and learned history stay on-device.",
+  "description": "A Spotlight-style launcher with application, window and local-file search, a calculator, GNOME Settings, system actions and web search. Includes an optional panel button, quick modes, keyboard actions, local ranking history and opt-in in-memory clipboard snapshots. Web queries are sent only when activated.",
   "shell-version": [
     "45",
     "46",
@@ -12,5 +12,6 @@
     "51"
   ],
   "url": "https://github.com/alexchandan/extensions",
-  "settings-schema": "org.gnome.shell.extensions.spotlight"
+  "settings-schema": "org.gnome.shell.extensions.spotlight",
+  "version-name": "3.1.1"
 }

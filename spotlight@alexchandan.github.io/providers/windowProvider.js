@@ -13,8 +13,6 @@ export class WindowProvider {
 
     search(query, limit = 6) {
         const term = query.trim();
-        if (!term)
-            return [];
 
         const results = [];
 
@@ -27,10 +25,10 @@ export class WindowProvider {
             const app = this._tracker.get_window_app(window);
             const appName = app?.get_name?.() || '';
 
-            let score = bestFieldScore(term, [
+            let score = term ? bestFieldScore(term, [
                 {value: title, weight: 1},
                 {value: appName, weight: 0.86},
-            ]);
+            ]) : 1000;
             if (score < 0)
                 continue;
 
@@ -48,19 +46,19 @@ export class WindowProvider {
                 score: score + 150,
                 historyData: null,
                 shortcutLabel: 'Switch ↵',
-                activate: () => this._activateWindow(window),
+                activate: timestamp => this._activateWindow(window, timestamp),
                 actions: {
-                    new: () => {
+                    new: timestamp => {
                         if (app?.can_open_new_window?.())
                             app.open_new_window(-1);
                         else
-                            this._activateWindow(window);
+                            this._activateWindow(window, timestamp);
                     },
-                    alternate: () => {
+                    alternate: timestamp => {
                         if (app?.can_open_new_window?.())
                             app.open_new_window(-1);
                         else
-                            this._activateWindow(window);
+                            this._activateWindow(window, timestamp);
                     },
                 },
             });
@@ -71,14 +69,17 @@ export class WindowProvider {
             .slice(0, limit);
     }
 
-    _activateWindow(window) {
-        const time = global.get_current_time();
+    _activateWindow(window, timestamp = 0) {
+        const time = timestamp || global.get_current_time();
         const workspace = window.get_workspace?.();
         const workspaceManager = global.workspace_manager;
         const activeWorkspaceNum = workspaceManager?.get_active_workspace_index?.() ?? 0;
         const windowWorkspaceNum = workspace ? workspace.index() : activeWorkspaceNum;
 
         try {
+            // A restored overview control can retain stage focus after hiding.
+            // Return keyboard focus to native windows before activating the target.
+            global.stage.set_key_focus(null);
             ShellMain.activateWindow(window, time, windowWorkspaceNum);
         } catch (_error) {
             try {

@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.spotlight" path="/org/gnome/shell/extensions/spotlight/">
+    <key name="show-panel-button" type="b"><default>true</default><summary>Show Spotlight in the top panel</summary></key>
     <key name="toggle-shortcut" type="as">
-      <default>['&lt;Super&gt;space']</default>
+      <default>['&lt;Super&gt;&lt;Control&gt;space']</default>
       <summary>Spotlight keyboard shortcut</summary>
     </key>
     <key name="selected-text-shortcut" type="as">
@@ -51,7 +52,7 @@
     <key name="enable-file-search" type="b"><default>true</default><summary>Search local files</summary></key>
     <key name="enable-settings-search" type="b"><default>true</default><summary>Search GNOME Settings panels</summary></key>
     <key name="enable-clipboard-search" type="b">
-      <default>true</default>
+      <default>false</default>
       <summary>Search session clipboard history</summary>
       <description>Stores a small clipboard history only in memory for the current GNOME Shell session.</description>
     </key>
@@ -70,6 +71,7 @@
     <key name="boost-favorite-apps" type="b"><default>true</default><summary>Boost favorite applications</summary></key>
     <key name="boost-recent-results" type="b"><default>true</default><summary>Boost recent and frequent results</summary></key>
     <key name="query-history-enabled" type="b"><default>true</default><summary>Enable local query history</summary></key>
+    <key name="file-refresh-token" type="i"><default>0</default><summary>Request a fresh file index</summary></key>
     <key name="history-clear-token" type="i"><default>0</default><summary>Internal history clear revision</summary></key>
 
     <key name="theme-mode" type="s">

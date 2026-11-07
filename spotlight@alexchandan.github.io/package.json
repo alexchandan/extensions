@@ -1,0 +1,10 @@
+{
+  "name": "spotlight-gnome-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/core.test.js && python3 scripts/check.py && python3 scripts/test-native.py",
+    "build": "python3 scripts/build.py",
+    "test:shell": "python3 scripts/test-shell.py"
+  }
+}

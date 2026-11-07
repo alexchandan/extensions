@@ -34,16 +34,14 @@ export class SettingsProvider {
 
     search(query, limit = 6) {
         const term = query.trim();
-        if (!term)
-            return [];
 
         return this._entries
             .map(entry => {
-                const score = bestFieldScore(term, [
+                const score = term ? bestFieldScore(term, [
                     {value: entry.name, weight: 1},
                     {value: entry.description, weight: 0.8},
                     {value: entry.executable, weight: 0.55},
-                ]);
+                ]) : 1000;
 
                 if (score < 0)
                     return null;

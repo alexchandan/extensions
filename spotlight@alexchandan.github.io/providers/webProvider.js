@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 import Gio from 'gi://Gio';
+import {customSearchUrl} from '../utils/webSearch.js';
 
 const ENGINES = {
     google: {
@@ -32,6 +33,16 @@ export class WebProvider {
         const engine = engineId === 'custom'
             ? {label: 'the web', url: value => this._customUrl(value)}
             : (ENGINES[engineId] ?? ENGINES.google);
+
+        if (engineId === 'custom') {
+            try {
+                this._customUrl(term);
+            } catch (_error) {
+                return [{id: 'web:invalid-url', type: 'info', title: 'Check your custom search URL',
+                    subtitle: 'Use an HTTP(S) URL with %s in Spotlight preferences.',
+                    iconName: 'dialog-warning-symbolic', score: -1000}];
+            }
+        }
 
         if (!term) {
             if (explicit) {
@@ -74,14 +85,7 @@ export class WebProvider {
     }
 
     _customUrl(query) {
-        const template = this._settings.get_string('custom-search-url').trim();
-        if (!/^https?:\/\//i.test(template))
-            return ENGINES.google.url(query);
-
-        const encoded = encodeURIComponent(query);
-        return template.includes('%s')
-            ? template.split('%s').join(encoded)
-            : `${template}${encoded}`;
+        return customSearchUrl(this._settings.get_string('custom-search-url'), query);
     }
 
     destroy() {

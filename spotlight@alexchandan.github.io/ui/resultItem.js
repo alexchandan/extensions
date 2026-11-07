@@ -1,59 +1,27 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
 import Clutter from 'gi://Clutter';
-import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
-function escape(text) {
-    return GLib.markup_escape_text(String(text ?? ''), -1);
-}
-
-function highlightedMarkup(text, query) {
-    const source = String(text ?? '');
-    const needle = String(query ?? '').trim();
-    if (!needle)
-        return escape(source);
-
-    const lower = source.toLocaleLowerCase();
-    const q = needle.toLocaleLowerCase();
-    const index = lower.indexOf(q);
-    if (index >= 0) {
-        return `${escape(source.slice(0, index))}<b>${escape(source.slice(index, index + needle.length))}</b>${escape(source.slice(index + needle.length))}`;
-    }
-
-    const matched = new Set();
-    let qi = 0;
-    for (let i = 0; i < lower.length && qi < q.length; i++) {
-        if (lower[i] === q[qi]) {
-            matched.add(i);
-            qi++;
-        }
-    }
-    if (qi !== q.length)
-        return escape(source);
-
-    let markup = '';
-    for (let i = 0; i < source.length; i++) {
-        const char = escape(source[i]);
-        markup += matched.has(i) ? `<b>${char}</b>` : char;
-    }
-    return markup;
-}
+import {boxOrientation} from '../utils/compat.js';
+import {escape, highlightedMarkup} from '../utils/markup.js';
 
 export const ResultItem = GObject.registerClass(
-class ResultItem extends St.BoxLayout {
-    _init(onActivate, onSelect) {
+class ResultItem extends St.Button {
+    _init(onActivate, onSelect, onKeyPress) {
         super._init({
             style_class: 'spotlight-result-item',
             reactive: true,
             track_hover: true,
-            can_focus: false,
-            orientation: Clutter.Orientation.HORIZONTAL,
+            can_focus: true,
             x_expand: true,
         });
 
+        this._content = new St.BoxLayout({style_class: 'spotlight-result-content',
+            ...boxOrientation(), x_expand: true});
+        this.set_child(this._content);
         this._result = null;
         this._onActivate = onActivate;
         this._onSelect = onSelect;
@@ -62,15 +30,15 @@ class ResultItem extends St.BoxLayout {
             style_class: 'spotlight-result-icon',
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this.add_child(this._icon);
+        this._content.add_child(this._icon);
 
         this._textBox = new St.BoxLayout({
-            orientation: Clutter.Orientation.VERTICAL,
+            ...boxOrientation(true),
             style_class: 'spotlight-result-text',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this.add_child(this._textBox);
+        this._content.add_child(this._textBox);
 
         this._nameLabel = new St.Label({
             style_class: 'spotlight-result-name',
@@ -88,10 +56,9 @@ class ResultItem extends St.BoxLayout {
 
         this._rightBox = new St.BoxLayout({
             style_class: 'spotlight-result-meta',
-            orientation: Clutter.Orientation.HORIZONTAL,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this.add_child(this._rightBox);
+        this._content.add_child(this._rightBox);
 
         this._categoryLabel = new St.Label({
             style_class: 'spotlight-result-category',
@@ -111,13 +78,9 @@ class ResultItem extends St.BoxLayout {
             return Clutter.EVENT_PROPAGATE;
         });
 
-        this.connect('button-release-event', (_actor, event) => {
-            if (event.get_button() !== 1)
-                return Clutter.EVENT_PROPAGATE;
-
-            this.activate(event.get_time());
-            return Clutter.EVENT_STOP;
-        });
+        this.connect('key-focus-in', () => this._onSelect?.(this));
+        this.connect('key-press-event', (_actor, event) => onKeyPress(event));
+        this.connect('clicked', () => this.activate(global.get_current_time()));
     }
 
     setResult(result, query = '', {showCategory = true} = {}) {
@@ -144,6 +107,7 @@ class ResultItem extends St.BoxLayout {
         this._rightBox.visible = this._categoryLabel.visible || this._shortcutLabel.visible;
 
         this.reactive = typeof result.activate === 'function';
+        this.can_focus = this.reactive;
         this._icon.visible = !isSection;
 
         this.accessible_name = result.subtitle
@@ -153,7 +117,6 @@ class ResultItem extends St.BoxLayout {
         if (!isSection) {
             if (result.gicon) {
                 this._icon.gicon = result.gicon;
-                this._icon.icon_name = null;
             } else {
                 this._icon.gicon = null;
                 this._icon.icon_name = result.iconName || 'edit-find-symbolic';

@@ -25,7 +25,7 @@
 .spotlight-entry {
     border-radius: 14px;
     padding: 14px 16px;
-    font-size: 18px;
+    font-size: 1.25em;
     font-weight: 500;
     border: 1px solid transparent;
     box-shadow: none;
@@ -79,6 +79,29 @@
     transition-duration: 90ms;
 }
 
+.spotlight-result-content { spacing: 12px; }
+.spotlight-modes { spacing: 6px; padding: 0 2px; }
+.spotlight-footer { spacing: 8px; padding: 4px 6px; }
+.spotlight-status { font-size: 0.85em; }
+.spotlight-chip {
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-size: 0.9em;
+    background-color: rgba(128, 128, 128, 0.12);
+}
+.spotlight-chip:hover { background-color: rgba(128, 128, 128, 0.25); }
+.spotlight-chip:checked, .spotlight-chip:focus {
+    background-color: #1c71d8;
+    color: #ffffff;
+    border-color: #99c1f1;
+}
+.spotlight-no-motion .spotlight-result-item { transition-duration: 0ms; }
+.spotlight-high-contrast .spotlight-container { border-color: currentColor; }
+.spotlight-high-contrast .spotlight-entry,
+.spotlight-high-contrast .spotlight-chip { border-color: currentColor; }
+
+
 .spotlight-dark .spotlight-result-item:hover {
     background-color: rgba(255, 255, 255, 0.075);
 }
@@ -105,12 +128,12 @@
 }
 
 .spotlight-result-name {
-    font-size: 14px;
+    font-size: 1em;
     font-weight: 600;
 }
 
 .spotlight-result-desc {
-    font-size: 12px;
+    font-size: 0.9em;
 }
 
 .spotlight-dark .spotlight-result-desc,
@@ -131,7 +154,7 @@
 }
 
 .spotlight-result-shortcut {
-    font-size: 11px;
+    font-size: 0.85em;
     font-weight: 600;
     padding: 3px 7px;
     border-radius: 6px;
@@ -157,7 +180,7 @@
 }
 
 .spotlight-result-category {
-    font-size: 9px;
+    font-size: 0.75em;
     font-weight: 700;
     padding: 3px 6px;
     border-radius: 6px;
@@ -186,7 +209,7 @@
 }
 
 .spotlight-result-section .spotlight-result-name {
-    font-size: 11px;
+    font-size: 0.85em;
     font-weight: 700;
 }
 
@@ -218,9 +241,16 @@
 }
 
 .spotlight-compact .spotlight-result-name {
-    font-size: 13px;
+    font-size: 0.95em;
 }
 
 .spotlight-compact .spotlight-result-desc {
-    font-size: 11px;
+    font-size: 0.85em;
 }
+
+.spotlight-clear-icon { icon-size: 16px; }
+
+.spotlight-high-contrast .spotlight-result-desc,
+.spotlight-high-contrast .spotlight-result-category,
+.spotlight-high-contrast .spotlight-result-shortcut,
+.spotlight-high-contrast .spotlight-result-section .spotlight-result-name { color: inherit; }

@@ -3,7 +3,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {normalizeText} from './fuzzySearch.js';
+import {normalizeText, parseScopedQuery} from './fuzzySearch.js';
 
 const MAX_EVENTS = 240;
 const MAX_QUERIES = 40;
@@ -14,7 +14,14 @@ function nowMs() {
 }
 
 export class UsageStore {
-    constructor() {
+    constructor({rememberQueries = true, learnRanking = true} = {}) {
+        this._rememberQueries = rememberQueries;
+        this._learnRanking = learnRanking;
+        this._destroyed = false;
+        this._revision = 0;
+        this._saving = false;
+        this._dirty = false;
+        this._cancellable = new Gio.Cancellable();
         this._data = {events: [], queries: []};
         const dir = GLib.build_filenamev([GLib.get_user_data_dir(), 'spotlight@alexchandan']);
         this._dir = Gio.File.new_for_path(dir);
@@ -23,60 +30,122 @@ export class UsageStore {
     }
 
     _load() {
-        try {
-            const [ok, contents] = this._file.load_contents(null);
-            if (!ok)
-                return;
-
-            const parsed = JSON.parse(new TextDecoder().decode(contents));
-            if (Array.isArray(parsed?.events))
-                this._data.events = parsed.events;
-            if (Array.isArray(parsed?.queries))
-                this._data.queries = parsed.queries;
-            this._prune();
-        } catch (_error) {
-            this._data = {events: [], queries: []};
-        }
+        const revision = this._revision;
+        this._file.load_contents_async(this._cancellable, (file, result) => {
+            try {
+                const [ok, contents] = file.load_contents_finish(result);
+                if (!ok || this._destroyed || revision !== this._revision || contents.length > 1024 * 1024)
+                    return;
+                const parsed = JSON.parse(new TextDecoder().decode(contents));
+                this._data.events = this._learnRanking && Array.isArray(parsed?.events) ? parsed.events : [];
+                this._data.queries = this._rememberQueries && Array.isArray(parsed?.queries) ? parsed.queries : [];
+                // Older releases accidentally persisted clipboard text. Remove it.
+                const containedClipboard = Array.isArray(parsed?.events) &&
+                    parsed.events.some(event => event?.type === 'clipboard');
+                if (containedClipboard)
+                    this._data.queries = [];
+                this._prune();
+                if (containedClipboard || !this._rememberQueries || !this._learnRanking)
+                    this._save();
+            } catch (_error) {
+                // First run, cancellation, or corrupt history: start empty.
+            }
+        });
     }
 
-    _ensureDir() {
-        try {
-            this._dir.make_directory_with_parents(null);
-        } catch (error) {
-            if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS))
+    setPrivacy({rememberQueries, learnRanking}) {
+        this._rememberQueries = rememberQueries;
+        this._learnRanking = learnRanking;
+        if (!rememberQueries) {
+            this._data.queries = [];
+            this._data.events = this._data.events
+                .filter(event => !['web', 'calculator'].includes(event.type))
+                .map(event => ({...event, query: ''}));
+        }
+        if (!learnRanking)
+            this._data.events = [];
+        if (!rememberQueries || !learnRanking)
+            this._save();
+    }
+
+    async _ensureDir() {
+        if (this._dirReady)
+            return;
+        const create = async directory => {
+            try {
+                await new Promise((resolve, reject) => directory.make_directory_async(
+                    GLib.PRIORITY_LOW, this._cancellable, (file, result) => {
+                        try { file.make_directory_finish(result); resolve(); } catch (error) { reject(error); }
+                    }));
+            } catch (error) {
+                if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS))
+                    return;
+                const parent = directory.get_parent();
+                if (parent && error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+                    await create(parent);
+                    await create(directory);
+                    return;
+                }
                 throw error;
-        }
+            }
+        };
+        await create(this._dir);
+        this._dirReady = true;
     }
 
-    _save() {
+    async _save() {
+        if (this._destroyed)
+            return;
+        this._revision++;
+        this._dirty = true;
+        if (this._saving)
+            return;
+        this._saving = true;
+        this._dirty = false;
         try {
-            this._ensureDir();
+            await this._ensureDir();
+            if (this._destroyed)
+                return;
             const bytes = new TextEncoder().encode(JSON.stringify(this._data));
-            this._file.replace_contents(
-                bytes,
-                null,
-                false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION,
-                null
-            );
+            await new Promise((resolve, reject) => this._file.replace_contents_bytes_async(
+                new GLib.Bytes(bytes), null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE,
+                this._cancellable, (file, result) => {
+                    try { file.replace_contents_finish(result); resolve(); } catch (error) { reject(error); }
+                }));
         } catch (error) {
-            logError(error, 'Spotlight: could not save local ranking history');
+            if (!this._destroyed)
+                console.error(`Spotlight: could not save history: ${error.message}`);
+        } finally {
+            this._saving = false;
+            if (this._dirty && !this._destroyed)
+                this._save();
         }
     }
 
     _prune() {
+        if (!this._rememberQueries) {
+            this._data.events = this._data.events
+                .filter(event => !['web', 'calculator'].includes(event?.type))
+                .map(event => ({...event, query: ''}));
+        }
         const cutoff = nowMs() - MAX_EVENT_AGE_MS;
         this._data.events = this._data.events
-            .filter(event => Number(event?.timestamp) >= cutoff && event?.id)
+            .filter(event => Number(event?.timestamp) >= cutoff
+                && typeof event?.id === 'string' && event.id.length <= 4096
+                && ['app', 'file', 'settings', 'system', 'web', 'window', 'calculator'].includes(event.type)
+                && typeof event.query === 'string')
             .slice(-MAX_EVENTS);
         this._data.queries = this._data.queries
-            .filter(query => typeof query === 'string' && query.trim())
+            .filter(query => typeof query === 'string' && query.trim() && query.length <= 500)
             .slice(0, MAX_QUERIES);
     }
 
     recordQuery(query) {
-        const cleaned = (query ?? '').trim();
-        if (cleaned.length < 1)
+        if (this._destroyed || !this._rememberQueries)
+            return;
+        const cleaned = (query ?? '').trim().slice(0, 500);
+        if (cleaned.length < 1 || parseScopedQuery(cleaned).scope === 'clipboard')
             return;
 
         this._rememberQuery(cleaned);
@@ -85,6 +154,9 @@ export class UsageStore {
 
 
     _rememberQuery(cleaned) {
+        if (!this._rememberQueries)
+            return;
+        cleaned = cleaned.slice(0, 500);
         const normalized = normalizeText(cleaned);
         this._data.queries = [
             cleaned,
@@ -93,7 +165,9 @@ export class UsageStore {
     }
 
     recordActivation(query, result, rawQuery = '') {
-        if (!result?.id)
+        if (this._destroyed || !this._learnRanking || !result?.id || result.type === 'clipboard'
+            || parseScopedQuery(rawQuery || query).scope === 'clipboard'
+            || (!this._rememberQueries && ['web', 'calculator'].includes(result.type)))
             return;
 
         const queryToSave = (rawQuery || query || '').trim();
@@ -106,7 +180,7 @@ export class UsageStore {
             type: result.type ?? '',
             title: result.title ?? '',
             subtitle: result.subtitle ?? '',
-            query: normalizeText(cleanedQuery || queryToSave),
+            query: this._rememberQueries ? normalizeText(cleanedQuery || queryToSave).slice(0, 500) : '',
             timestamp: nowMs(),
             historyData: result.historyData ?? null,
         });
@@ -125,7 +199,7 @@ export class UsageStore {
         let newest = 0;
 
         for (const event of this._data.events) {
-            if (event.id !== resultId)
+            if (event.id !== resultId || Number(event.timestamp) < now - MAX_EVENT_AGE_MS)
                 continue;
 
             newest = Math.max(newest, Number(event.timestamp) || 0);
@@ -149,6 +223,7 @@ export class UsageStore {
     }
 
     getRecentEvents(type = null, limit = 8) {
+        this._prune();
         const seen = new Set();
         const results = [];
 
@@ -178,6 +253,8 @@ export class UsageStore {
     }
 
     destroy() {
+        this._destroyed = true;
+        this._cancellable.cancel();
         this._data = {events: [], queries: []};
         this._dir = null;
         this._file = null;

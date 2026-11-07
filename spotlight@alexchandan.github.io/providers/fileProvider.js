@@ -3,7 +3,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {bestFieldScore, normalizeText} from '../utils/fuzzySearch.js';
+import {fuzzyScorePrepared, normalizeText, prepareSearchText} from '../utils/fuzzySearch.js';
 import {compactHomePath} from '../utils/format.js';
 
 const INDEX_BATCH_SIZE = 80;
@@ -24,18 +24,22 @@ const SKIP_DIRECTORIES = new Set([
 ]);
 
 export class FileProvider {
-    constructor(settings) {
+    constructor(settings, onChanged = null) {
+        this._onChanged = onChanged;
+        this._destroyed = false;
+        this._run = null;
+        this._launchCancellable = new Gio.Cancellable();
         this._settings = settings;
         this._entries = [];
         this._queue = [];
         this._seenPaths = new Set();
-        this._idleId = 0;
-        this._enumerator = null;
-        this._currentJob = null;
         this._isIndexing = false;
         this._enabled = this._settings.get_boolean('enable-file-search');
 
-        if (this._enabled)
+    }
+
+    ensureIndex() {
+        if (this._enabled && !this._started)
             this.rebuildIndex();
     }
 
@@ -47,6 +51,9 @@ export class FileProvider {
         this._enabled = Boolean(enabled);
         if (!this._enabled) {
             this._stopIndexer();
+            this._entries = [];
+            this._started = false;
+            this._seenPaths.clear();
             return;
         }
 
@@ -55,18 +62,29 @@ export class FileProvider {
     }
 
     rebuildIndex() {
-        if (!this._enabled)
+        if (!this._enabled || this._destroyed)
             return;
         this._stopIndexer();
+        this._started = true;
 
         this._entries = [];
         this._queue = [];
         this._seenPaths.clear();
         this._isIndexing = true;
 
+        this._queue = this._getRootJobs();
+
+        const run = {cancellable: new Gio.Cancellable(), enumerator: null,
+            visited: new Set(), scanned: 0, limit: this._settings.get_int('file-index-limit')};
+        this._run = run;
+        this._indexNextDirectory(run);
+    }
+
+    _getRootJobs() {
+        const jobs = [];
         const home = GLib.get_home_dir();
         if (home)
-            this._queue.push({file: Gio.File.new_for_path(home), depth: 0, maxDepth: 1});
+            jobs.push({file: Gio.File.new_for_path(home), depth: 0, maxDepth: 1});
 
         const specialDirs = [
             GLib.UserDirectory.DIRECTORY_DESKTOP,
@@ -84,130 +102,154 @@ export class FileProvider {
                 continue;
 
             addedRoots.add(path);
-            this._queue.push({file: Gio.File.new_for_path(path), depth: 0, maxDepth: 4});
+            jobs.push({file: Gio.File.new_for_path(path), depth: 0, maxDepth: 4});
         }
 
-        this._idleId = GLib.idle_add(GLib.PRIORITY_LOW, () => this._indexBatch());
-        GLib.Source.set_name_by_id?.(this._idleId, '[spotlight] file indexer');
+        return jobs;
     }
 
-    _indexBatch() {
-        const limit = this._settings.get_int('file-index-limit');
-        if (this._entries.length >= limit) {
-            this._finishIndexing();
-            return GLib.SOURCE_REMOVE;
+    _isCurrent(run) {
+        return !this._destroyed && this._run === run && !run.cancellable.is_cancelled();
+    }
+
+    _indexNextDirectory(run) {
+        if (!this._isCurrent(run))
+            return;
+        const job = this._queue.shift();
+        if (!job || this._entries.length >= run.limit) {
+            this._finishIndexing(run);
+            return;
         }
-
-        let processed = 0;
-        while (processed < INDEX_BATCH_SIZE) {
-            if (!this._enumerator) {
-                this._currentJob = this._queue.shift() ?? null;
-                if (!this._currentJob) {
-                    this._finishIndexing();
-                    return GLib.SOURCE_REMOVE;
-                }
-
+        const path = job.file.get_path();
+        // A special directory can also be reached through HOME. Visit it at
+        // its deepest requested depth, while deduplicating indexed entries.
+        const remaining = job.maxDepth - job.depth;
+        const visitKey = `${path}:${remaining}`;
+        if (run.visited.has(visitKey)) {
+            this._indexNextDirectory(run);
+            return;
+        }
+        run.visited.add(visitKey);
+        job.file.enumerate_children_async(
+            'standard::name,standard::display-name,standard::type,standard::icon,standard::is-hidden',
+            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, GLib.PRIORITY_LOW,
+            run.cancellable, (file, result) => {
+                let enumerator;
                 try {
-                    this._enumerator = this._currentJob.file.enumerate_children(
-                        'standard::name,standard::display-name,standard::type,standard::icon,standard::is-hidden',
-                        Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-                        null
-                    );
+                    enumerator = file.enumerate_children_finish(result);
                 } catch (_error) {
-                    this._enumerator = null;
-                    this._currentJob = null;
-                    continue;
+                    if (this._isCurrent(run))
+                        this._indexNextDirectory(run);
+                    return;
                 }
-            }
-
-            let info;
-            try {
-                info = this._enumerator.next_file(null);
-            } catch (_error) {
-                this._closeEnumerator();
-                continue;
-            }
-
-            if (!info) {
-                this._closeEnumerator();
-                continue;
-            }
-
-            processed++;
-            this._indexInfo(info);
-
-            if (this._entries.length >= limit) {
-                this._finishIndexing();
-                return GLib.SOURCE_REMOVE;
-            }
-        }
-
-        return GLib.SOURCE_CONTINUE;
+                if (!this._isCurrent(run)) {
+                    this._closeEnumerator(enumerator);
+                    return;
+                }
+                run.enumerator = enumerator;
+                this._readBatch(run, job);
+            });
     }
 
-    _indexInfo(info) {
+    _readBatch(run, job) {
+        const enumerator = run.enumerator;
+        enumerator.next_files_async(INDEX_BATCH_SIZE, GLib.PRIORITY_LOW,
+            run.cancellable, (source, result) => {
+                let infos = [];
+                try {
+                    infos = source.next_files_finish(result);
+                } catch (_error) {
+                    // Missing/unreadable files must not stop the rest of the index.
+                }
+                if (!this._isCurrent(run)) {
+                    this._closeEnumerator(source);
+                    return;
+                }
+                run.scanned += infos.length;
+                for (const info of infos) {
+                    if (this._entries.length >= run.limit)
+                        break;
+                    this._indexInfo(info, job);
+                }
+                this._onChanged?.();
+                if (this._entries.length >= run.limit || run.scanned >= run.limit * 8) {
+                    this._finishIndexing(run);
+                } else if (infos.length === 0) {
+                    this._closeEnumerator(enumerator);
+                    run.enumerator = null;
+                    this._indexNextDirectory(run);
+                } else {
+                    this._readBatch(run, job);
+                }
+            });
+    }
+
+    _indexInfo(info, job) {
         const name = info.get_name();
         if (!name || name.startsWith('.') || info.get_is_hidden?.())
             return;
 
-        const child = this._currentJob.file.get_child(name);
+        const child = job.file.get_child(name);
         const path = child.get_path();
-        if (!path || this._seenPaths.has(path))
+        if (!path)
             return;
-
-        this._seenPaths.add(path);
 
         const isDirectory = info.get_file_type() === Gio.FileType.DIRECTORY;
         const displayName = info.get_display_name?.() || name;
 
-        this._entries.push({
-            id: path,
-            file: child,
-            path,
-            name: displayName,
-            normalizedName: normalizeText(displayName),
-            normalizedPath: normalizeText(compactHomePath(path)),
-            gicon: info.get_icon?.() ?? null,
-            isDirectory,
-        });
+        if (!this._seenPaths.has(path)) {
+            this._seenPaths.add(path);
+            this._entries.push({
+                id: path,
+                file: child,
+                path,
+                name: displayName,
+                nameSearch: prepareSearchText(displayName),
+                pathSearch: prepareSearchText(compactHomePath(path)),
+                gicon: info.get_icon?.() ?? null,
+                isDirectory,
+            });
+        }
 
         if (
             isDirectory
-            && this._currentJob.depth < this._currentJob.maxDepth
+            && job.depth < job.maxDepth
             && !SKIP_DIRECTORIES.has(name)
         ) {
             this._queue.push({
                 file: child,
-                depth: this._currentJob.depth + 1,
-                maxDepth: this._currentJob.maxDepth,
+                depth: job.depth + 1,
+                maxDepth: job.maxDepth,
             });
         }
     }
 
-    _closeEnumerator() {
-        try {
-            this._enumerator?.close(null);
-        } catch (_error) {
-            // Ignore shutdown errors from inaccessible or disappearing files.
-        }
-
-        this._enumerator = null;
-        this._currentJob = null;
+    _closeEnumerator(enumerator) {
+        if (!enumerator || enumerator.is_closed() || enumerator.has_pending())
+            return;
+        enumerator.close_async(GLib.PRIORITY_LOW, null, (source, result) => {
+            try {
+                source.close_finish(result);
+            } catch (_error) {
+                // The directory may have disappeared.
+            }
+        });
     }
 
-    _finishIndexing() {
-        this._closeEnumerator();
+    _finishIndexing(run) {
+        this._closeEnumerator(run.enumerator);
+        this._run = null;
         this._queue = [];
         this._isIndexing = false;
-        this._idleId = 0;
+        this._onChanged?.();
     }
 
     _stopIndexer() {
-        if (this._idleId) {
-            GLib.Source.remove(this._idleId);
-            this._idleId = 0;
+        if (this._run) {
+            this._run.cancellable.cancel();
+            this._closeEnumerator(this._run.enumerator);
+            this._run = null;
         }
-        this._closeEnumerator();
         this._queue = [];
         this._isIndexing = false;
     }
@@ -256,41 +298,23 @@ export class FileProvider {
             return [];
         }
 
+        const normalizedQuery = normalizeText(term);
         const matches = [];
         for (const entry of this._entries) {
-            const score = bestFieldScore(term, [
-                {value: entry.normalizedName, weight: 1},
-                {value: entry.normalizedPath, weight: 0.68},
-            ]);
+            const nameScore = fuzzyScorePrepared(entry.nameSearch, normalizedQuery);
+            const pathScore = fuzzyScorePrepared(entry.pathSearch, normalizedQuery);
+            const score = Math.max(nameScore, pathScore < 0 ? -1 : Math.round(pathScore * 0.68));
 
             if (score < 0)
                 continue;
 
-            matches.push({
-                id: `file:${entry.id}`,
-                type: 'file',
-                category: entry.isDirectory ? 'FOLDER' : 'FILE',
-                title: entry.name,
-                subtitle: compactHomePath(entry.path),
-                gicon: entry.gicon,
-                iconName: entry.isDirectory ? 'folder-symbolic' : 'text-x-generic-symbolic',
-                score: score + (entry.isDirectory ? 20 : 0),
-                historyData: {path: entry.path},
-                activate: timestamp => Gio.AppInfo.launch_default_for_uri(
-                    entry.file.get_uri(),
-                    global.create_app_launch_context(timestamp || global.get_current_time(), -1)
-                ),
-                shortcutLabel: 'Open ↵',
-                actions: {
-                    new: timestamp => this._revealFile(entry, timestamp),
-                    alternate: timestamp => this._revealFile(entry, timestamp),
-                },
-            });
+            matches.push({entry, score: score + (entry.isDirectory ? 20 : 0)});
         }
 
         const results = matches
-            .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
-            .slice(0, limit);
+            .sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name))
+            .slice(0, limit)
+            .map(({entry, score}) => this._toResult(entry, score));
 
         if (explicit && results.length === 0 && this._isIndexing) {
             return [{
@@ -307,7 +331,32 @@ export class FileProvider {
         return results;
     }
 
+    _toResult(entry, score) {
+        return {
+            id: `file:${entry.id}`,
+            type: 'file',
+            category: entry.isDirectory ? 'FOLDER' : 'FILE',
+            title: entry.name,
+            subtitle: compactHomePath(entry.path),
+            gicon: entry.gicon,
+            iconName: entry.isDirectory ? 'folder-symbolic' : 'text-x-generic-symbolic',
+            score,
+            historyData: {path: entry.path},
+            activate: timestamp => Gio.AppInfo.launch_default_for_uri(
+                entry.file.get_uri(),
+                global.create_app_launch_context(timestamp || global.get_current_time(), -1)
+            ),
+            shortcutLabel: 'Open ↵',
+            actions: {
+                new: timestamp => this._revealFile(entry, timestamp),
+                alternate: timestamp => this._revealFile(entry, timestamp),
+            },
+        };
+    }
+
     getRecentResults(events, limit = 4) {
+        if (!this._enabled || limit <= 0)
+            return [];
         return events
             .map((event, index) => {
                 const path = event.historyData?.path
@@ -319,26 +368,7 @@ export class FileProvider {
                 if (!entry)
                     return null;
 
-                return {
-                    id: `file:${entry.id}`,
-                    type: 'file',
-                    category: entry.isDirectory ? 'FOLDER' : 'FILE',
-                    title: entry.name,
-                    subtitle: compactHomePath(entry.path),
-                    gicon: entry.gicon,
-                    iconName: entry.isDirectory ? 'folder-symbolic' : 'text-x-generic-symbolic',
-                    score: 900 - index,
-                    historyData: {path: entry.path},
-                    activate: timestamp => Gio.AppInfo.launch_default_for_uri(
-                        entry.file.get_uri(),
-                        global.create_app_launch_context(timestamp || global.get_current_time(), -1)
-                    ),
-                    shortcutLabel: 'Open ↵',
-                    actions: {
-                        new: timestamp => this._revealFile(entry, timestamp),
-                        alternate: timestamp => this._revealFile(entry, timestamp),
-                    },
-                };
+                return this._toResult(entry, 900 - index);
             })
             .filter(Boolean)
             .slice(0, limit);
@@ -356,13 +386,19 @@ export class FileProvider {
                 new GLib.Variant('(ass)', [[uri], '']),
                 null,
                 Gio.DBusCallFlags.NONE,
-                -1,
-                null,
+                3000,
+                this._launchCancellable,
                 (connection, result) => {
                     try {
                         connection.call_finish(result);
                     } catch (_err) {
-                        this._openContainingFolder(entry, timestamp);
+                        if (!this._destroyed) {
+                            try {
+                                this._openContainingFolder(entry, timestamp);
+                            } catch (error) {
+                                console.error(`Spotlight: could not reveal file: ${error.message}`);
+                            }
+                        }
                     }
                 }
             );
@@ -383,6 +419,9 @@ export class FileProvider {
     }
 
     destroy() {
+        this._destroyed = true;
+        this._launchCancellable.cancel();
+        this._onChanged = null;
         this._stopIndexer();
         this._entries = [];
         this._seenPaths.clear();

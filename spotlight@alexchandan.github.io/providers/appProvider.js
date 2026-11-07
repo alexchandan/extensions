@@ -2,6 +2,7 @@
 
 import Gio from 'gi://Gio';
 import Shell from 'gi://Shell';
+import * as ShellMain from 'resource:///org/gnome/shell/ui/main.js';
 
 import {bestFieldScore, normalizeText} from '../utils/fuzzySearch.js';
 
@@ -206,14 +207,19 @@ export class AppProvider {
         const app = entry.id ? this._appSystem.lookup_app(entry.id) : null;
         const eventTime = timestamp || global.get_current_time();
 
+        // Closing Spotlight can restore focus to the overview's entry. Release
+        // that focus before handing the original input event to the application.
+        ShellMain.overview.hide();
+        global.stage.set_key_focus(null);
+
         if (app) {
             try {
-                app.activate();
+                app.activate_full(-1, eventTime);
                 return;
             } catch (error) {
-                logError(error, `Spotlight: app.activate failed for ${entry.name}`);
+                logError(error, `Spotlight: app.activate_full failed for ${entry.name}`);
                 try {
-                    app.activate_full(-1, eventTime);
+                    app.activate();
                     return;
                 } catch (_fallbackError) {
                     // Fall through to desktop launch.

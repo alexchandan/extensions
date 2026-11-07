@@ -11,7 +11,7 @@ const ACTIONS = [
         keywords: 'lock lock screen secure screen',
         iconName: 'system-lock-screen-symbolic',
         method: 'activateLockScreen',
-        availability: 'can-lock-screen',
+        availability: 'canLockScreen',
         subtitle: 'System action',
     },
     {
@@ -20,7 +20,7 @@ const ACTIONS = [
         keywords: 'suspend sleep standby',
         iconName: 'weather-clear-night-symbolic',
         method: 'activateSuspend',
-        availability: 'can-suspend',
+        availability: 'canSuspend',
         subtitle: 'System action',
     },
     {
@@ -29,7 +29,7 @@ const ACTIONS = [
         keywords: 'restart reboot',
         iconName: 'system-reboot-symbolic',
         method: 'activateRestart',
-        availability: 'can-restart',
+        availability: 'canRestart',
         subtitle: 'Opens GNOME confirmation',
         danger: true,
     },
@@ -39,7 +39,7 @@ const ACTIONS = [
         keywords: 'shut down shutdown power off poweroff halt stop',
         iconName: 'system-shutdown-symbolic',
         method: 'activatePowerOff',
-        availability: 'can-power-off',
+        availability: 'canPowerOff',
         subtitle: 'Opens GNOME confirmation',
         danger: true,
     },
@@ -49,7 +49,7 @@ const ACTIONS = [
         keywords: 'log out logout sign out sign off',
         iconName: 'system-log-out-symbolic',
         method: 'activateLogout',
-        availability: 'can-logout',
+        availability: 'canLogout',
         subtitle: 'Opens GNOME confirmation',
         danger: true,
     },
@@ -115,29 +115,21 @@ export class SystemProvider {
     }
 
     _isAvailable(action) {
+        if (typeof this._systemActions?.[action.method] !== 'function')
+            return false;
         try {
-            return this._systemActions.get_property(action.availability) !== false;
+            // Shell defines these as JavaScript getters; get_property() does
+            // not read them correctly through GJS's GObject binding.
+            return this._systemActions[action.availability] === true;
         } catch (_error) {
-            // Keep the action searchable on older Shell versions where a
-            // particular availability property may not be exposed.
-            return true;
+            return false;
         }
     }
 
     _activate(action) {
-        try {
-            const method = this._systemActions[action.method];
-            if (typeof method !== 'function')
-                throw new Error(`${action.method} is unavailable`);
-
-            method.call(this._systemActions);
-        } catch (error) {
-            logError(error, `Spotlight: unable to run ${action.title}`);
-            global.notify_error?.(
-                'Spotlight',
-                `${action.title} is not available in the current session.`
-            );
-        }
+        if (!this._isAvailable(action))
+            throw new Error('System action is unavailable in this session');
+        this._systemActions[action.method]();
     }
 
     destroy() {

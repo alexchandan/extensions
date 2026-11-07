@@ -6,6 +6,8 @@ import Gio from "gi://Gio";
 import GLib from "gi://GLib";
 import Gtk from "gi://Gtk";
 
+import {customSearchUrl} from "./utils/webSearch.js";
+
 import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
 const WEB_ENGINES = [
@@ -35,6 +37,7 @@ const PROVIDERS = new Map([
   ["web", "Web Search"],
 ]);
 const SETTINGS_KEYS = [
+  "show-panel-button",
   "toggle-shortcut",
   "selected-text-shortcut",
   "result-count",
@@ -66,6 +69,12 @@ const SETTINGS_KEYS = [
 export default class SpotlightPreferences extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
+    this._signalIds = [];
+    window.connect("close-request", () => {
+      for (const id of this._signalIds) settings.disconnect(id);
+      this._signalIds = [];
+      return false;
+    });
     window.set_default_size(680, 780);
 
     const page = new Adw.PreferencesPage({
@@ -92,6 +101,8 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         "Every global shortcut must contain a modifier plus another key.",
     });
     page.add(group);
+    group.add(this._switch(settings, "show-panel-button", "Panel button",
+      "Open Spotlight and its preferences from the top panel without a keyboard shortcut."));
     this._addShortcutRow(
       group,
       window,
@@ -135,15 +146,8 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     row.add_suffix(reset);
     row.add_suffix(edit);
 
-    const changedId = settings.connect(`changed::${key}`, () =>
-      label.set_accelerator(settings.get_strv(key)[0] || ""),
-    );
-    window.connect("close-request", () => {
-      try {
-        settings.disconnect(changedId);
-      } catch (_error) {}
-      return false;
-    });
+    this._watch(settings, `changed::${key}`, () =>
+      label.set_accelerator(settings.get_strv(key)[0] || ""));
     reset.connect("clicked", () => settings.reset(key));
     edit.connect("clicked", () =>
       this._showShortcutDialog(window, settings, key, title),
@@ -153,12 +157,12 @@ export default class SpotlightPreferences extends ExtensionPreferences {
   _showShortcutDialog(window, settings, key, title) {
     const original = settings.get_strv(key);
     let pending = original[0] || "";
-    settings.set_strv(key, []);
 
     const dialog = new Gtk.Dialog({
       title,
       transient_for: window,
       modal: true,
+      destroy_with_parent: true,
     });
     dialog.add_button("Cancel", Gtk.ResponseType.CANCEL);
     dialog.add_button("Apply", Gtk.ResponseType.OK);
@@ -183,7 +187,7 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     content.append(
       new Gtk.Label({
         label:
-          "Use at least two keys, such as Super + Space. Backspace disables it; Escape cancels.",
+          "Use at least two keys, such as Super + Ctrl + Space. Backspace disables it; Escape cancels.",
         wrap: true,
         xalign: 0,
         css_classes: ["dim-label"],
@@ -222,14 +226,22 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         validation.visible = false;
         return Gdk.EVENT_STOP;
       }
-      if (!Gtk.accelerator_valid(keyval, mask) || mask === 0) {
+      if (!Gtk.accelerator_valid(keyval, mask) ||
+          !(mask & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK | Gdk.ModifierType.HYPER_MASK))) {
         validation.label =
-          "Use a modifier plus another key, for example Super + Space.";
+          "Use a modifier plus another key, for example Super + Ctrl + Space.";
+        validation.visible = true;
+        return Gdk.EVENT_STOP;
+      }
+      const candidate = Gtk.accelerator_name(keyval, mask);
+      const otherKey = key === 'toggle-shortcut' ? 'selected-text-shortcut' : 'toggle-shortcut';
+      if (settings.get_strv(otherKey).includes(candidate)) {
+        validation.label = "This shortcut is already assigned to the other Spotlight action.";
         validation.visible = true;
         return Gdk.EVENT_STOP;
       }
       validation.visible = false;
-      pending = Gtk.accelerator_name_with_keycode(null, keyval, keycode, mask);
+      pending = candidate;
       shortcut.set_accelerator(pending);
       return Gdk.EVENT_STOP;
     });
@@ -294,12 +306,13 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         WEB_ENGINES[engine.selected]?.[0] ?? "google",
       ),
     );
-    settings.connect("changed::web-engine", syncEngine);
+    this._watch(settings, "changed::web-engine", syncEngine);
 
     const custom = new Adw.EntryRow({
       title: "Custom search URL",
       text: settings.get_string("custom-search-url"),
     });
+    custom.tooltip_text = "Use an HTTP(S) URL containing %s, for example https://example.com/search?q=%s";
     custom.add_prefix(new Gtk.Image({ icon_name: "insert-link-symbolic" }));
     group.add(custom);
     settings.bind(
@@ -310,8 +323,18 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     );
     const syncCustom = () =>
       (custom.sensitive = settings.get_string("web-engine") === "custom");
+    const validateCustom = () => {
+      try {
+        customSearchUrl(custom.text, 'test');
+        custom.remove_css_class('error');
+      } catch (_error) {
+        custom.add_css_class('error');
+      }
+    };
+    custom.connect('notify::text', validateCustom);
+    validateCustom();
     syncCustom();
-    settings.connect("changed::web-engine", syncCustom);
+    this._watch(settings, "changed::web-engine", syncCustom);
     group.add(
       this._switch(
         settings,
@@ -374,7 +397,7 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         settings,
         "boost-recent-results",
         "Boost recent/frequent items",
-        "Use GNOME app usage plus local recent selections as a small signal.",
+        "Use GNOME application usage as a small ranking signal.",
       ),
     );
     group.add(
@@ -423,9 +446,17 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         settings,
         "enable-clipboard-search",
         "Clipboard history",
-        "Session-only text history; nothing is written to disk.",
+        "Off by default. Captures text when Spotlight opens; disabling clears it. Never saved to disk.",
       ),
     );
+    const refresh = new Adw.ActionRow({title: "Refresh file index",
+      subtitle: "Include files added or renamed since the last scan."});
+    const refreshButton = new Gtk.Button({label: "Refresh", valign: Gtk.Align.CENTER});
+    refreshButton.connect("clicked", () => settings.set_int("file-refresh-token",
+      (settings.get_int("file-refresh-token") + 1) % 2147483647));
+    refresh.add_suffix(refreshButton);
+    refresh.activatable_widget = refreshButton;
+    group.add(refresh);
     const limit = new Adw.SpinRow({
       title: "File index limit",
       subtitle: "Maximum local file and folder names kept in memory",
@@ -466,8 +497,7 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         list.remove(child);
         child = next;
       }
-      const order = settings
-        .get_strv("provider-order")
+      const order = [...new Set(settings.get_strv("provider-order"))]
         .filter((id) => PROVIDERS.has(id));
       for (const id of PROVIDERS.keys())
         if (!order.includes(id)) order.push(id);
@@ -479,12 +509,14 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         });
         const up = new Gtk.Button({
           icon_name: "go-up-symbolic",
+          tooltip_text: `Move ${PROVIDERS.get(id)} up`,
           valign: Gtk.Align.CENTER,
           sensitive: index > 0,
           css_classes: ["flat"],
         });
         const down = new Gtk.Button({
           icon_name: "go-down-symbolic",
+          tooltip_text: `Move ${PROVIDERS.get(id)} down`,
           valign: Gtk.Align.CENTER,
           sensitive: index < order.length - 1,
           css_classes: ["flat"],
@@ -501,7 +533,7 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       });
     };
     render();
-    settings.connect("changed::provider-order", render);
+    this._watch(settings, "changed::provider-order", render);
   }
 
   _moveProvider(settings, currentOrder, index, direction) {
@@ -632,10 +664,15 @@ export default class SpotlightPreferences extends ExtensionPreferences {
         ]);
         try {
           Gio.File.new_for_path(path).delete(null);
-        } catch (_error) {}
+        } catch (error) {
+          if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+            window.add_toast(new Adw.Toast({title: "Could not clear saved history"}));
+            return;
+          }
+        }
         settings.set_int(
           "history-clear-token",
-          settings.get_int("history-clear-token") + 1,
+          (settings.get_int("history-clear-token") + 1) % 2147483647,
         );
       });
       dialog.present();
@@ -695,8 +732,12 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     row.connect("notify::selected", () =>
       settings.set_string(key, options[row.selected]?.[0] ?? options[0][0]),
     );
-    settings.connect(`changed::${key}`, sync);
+    this._watch(settings, `changed::${key}`, sync);
     return row;
+  }
+
+  _watch(settings, signal, callback) {
+    this._signalIds.push(settings.connect(signal, callback));
   }
 
   _switch(settings, key, title, subtitle) {

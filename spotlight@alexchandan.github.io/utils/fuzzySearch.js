@@ -3,13 +3,12 @@
 export function normalizeText(value) {
     return String(value ?? '')
         .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/([A-Za-z])[\u0300-\u036f]+/g, '$1')
         .toLowerCase()
         .trim();
 }
 
-function wordPrefixScore(text, query) {
-    const words = text.split(/[^a-z0-9]+/).filter(Boolean);
+function wordPrefixScore(words, query) {
     const matchingWord = words.findIndex(word => word.startsWith(query));
     if (matchingWord < 0)
         return -1;
@@ -17,15 +16,9 @@ function wordPrefixScore(text, query) {
     return 900 - matchingWord * 8;
 }
 
-function initialsScore(text, query) {
+function initialsScore(initials, query) {
     if (query.length < 2)
         return -1;
-
-    const initials = text
-        .split(/[^a-z0-9]+/)
-        .filter(Boolean)
-        .map(word => word[0])
-        .join('');
 
     if (initials === query)
         return 930;
@@ -65,11 +58,20 @@ function subsequenceScore(text, query) {
     return 610 + contiguousBonus - gapPenalty - startPenalty - lengthPenalty;
 }
 
-export function fuzzyScore(value, rawQuery) {
+export function prepareSearchText(value) {
     const text = normalizeText(value);
-    const query = normalizeText(rawQuery);
+    const words = text.split(/[^\p{L}\p{N}\p{M}]+/gu).filter(Boolean);
+    return {text, words, initials: words.map(word => Array.from(word)[0]).join('')};
+}
 
-    if (!text || !query)
+export function fuzzyScore(value, rawQuery) {
+    return fuzzyScorePrepared(prepareSearchText(value), normalizeText(rawQuery));
+}
+
+// Providers may prepare immutable names once when their cache/index is built.
+export function fuzzyScorePrepared(prepared, query) {
+    const {text, words, initials} = prepared;
+    if (!text || !query || query.length > text.length)
         return -1;
 
     if (text === query)
@@ -78,13 +80,13 @@ export function fuzzyScore(value, rawQuery) {
     if (text.startsWith(query))
         return 1050 - Math.min(120, text.length - query.length);
 
-    const wordScore = wordPrefixScore(text, query);
+    const wordScore = wordPrefixScore(words, query);
     if (wordScore >= 0)
         return wordScore;
 
-    const initials = initialsScore(text, query);
-    if (initials >= 0)
-        return initials;
+    const acronymScore = initialsScore(initials, query);
+    if (acronymScore >= 0)
+        return acronymScore;
 
     const substringIndex = text.indexOf(query);
     if (substringIndex >= 0)
@@ -103,7 +105,7 @@ export function getMatchTier(value, rawQuery) {
     if (text.startsWith(query))
         return 'prefix';
 
-    const words = text.split(/[^a-z0-9]+/).filter(Boolean);
+    const words = text.split(/[^\p{L}\p{N}\p{M}]+/gu).filter(Boolean);
     if (words.some(word => word === query))
         return 'word-exact';
     if (words.some(word => word.startsWith(query)))
@@ -154,7 +156,7 @@ export function parseScopedQuery(rawText) {
 
     const prefixes = 'app|apps|win|window|windows|file|files|setting|settings|web|system|power|clip|clipboard|calc|calculator';
     const match = text.match(new RegExp(`^(${prefixes})\\s*:\\s*(.*)$`, 'i'))
-        ?? text.match(new RegExp(`^(${prefixes})\\s+(.*)$`, 'i'));
+;
 
     if (!match)
         return {scope: 'all', term: text, explicit: false};
